@@ -212,26 +212,39 @@ print('Core ML stack versions verified!')
 echo "Core ML stack installed and verified"
 
 # ==============================================================================
-# Install Flash Attention
+# Install Flash Attention (Optional - may fail on some systems)
 # ==============================================================================
 echo ""
 echo "=============================================================================="
-echo "Step 4: Flash Attention Installation"
+echo "Step 4: Flash Attention Installation (Optional)"
 echo "=============================================================================="
-echo "Installing flash-attn..."
+echo "Installing flash-attn build dependencies..."
 echo ""
 
-pip install flash-attn --no-build-isolation
+# Install build dependencies for flash-attn
+pip install psutil packaging ninja
 
 echo ""
-echo "Verifying flash-attn..."
-python -c "
+echo "Attempting to install flash-attn (this may take 10-20 minutes to compile)..."
+echo "Note: flash-attn is optional - inference will still work with xformers if this fails"
+echo ""
+
+# Try to install flash-attn, but don't fail the script if it doesn't work
+if pip install flash-attn --no-build-isolation; then
+    echo ""
+    echo "Verifying flash-attn..."
+    python -c "
 import flash_attn
 print(f'flash-attn: {flash_attn.__version__}')
 print('flash-attn installed successfully!')
 "
-
-echo "flash-attn installed and verified"
+    echo "flash-attn installed and verified"
+else
+    echo ""
+    echo "WARNING: flash-attn installation failed (this is OK)"
+    echo "The model will use xformers for attention instead"
+    echo "You can try installing flash-attn manually later if needed"
+fi
 
 # ==============================================================================
 # Install PyAV via conda
