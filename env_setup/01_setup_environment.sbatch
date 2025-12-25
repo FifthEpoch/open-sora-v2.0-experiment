@@ -322,10 +322,18 @@ echo ""
 echo "=============================================================================="
 echo "Step 8: Additional Training Requirements"
 echo "=============================================================================="
-echo "Installing TensorNVMe for async checkpoint saving..."
+
+# TensorNVMe is optional - requires system libraries (liburing, libaio)
+echo "Attempting to install TensorNVMe for async checkpoint saving..."
+echo "Note: TensorNVMe is optional - inference will work without it"
 echo ""
 
-pip install git+https://github.com/hpcaitech/TensorNVMe.git
+if pip install git+https://github.com/hpcaitech/TensorNVMe.git 2>/dev/null; then
+    echo "TensorNVMe installed successfully"
+else
+    echo "WARNING: TensorNVMe installation failed (requires liburing/libaio system libs)"
+    echo "This is optional - training/inference will still work without it"
+fi
 
 echo ""
 echo "Installing additional packages..."
