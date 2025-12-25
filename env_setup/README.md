@@ -7,8 +7,8 @@ This directory contains scripts to set up the environment for running Open-Sora 
 ```bash
 # 1. Clone/copy Open-Sora v2.0 to scratch
 cd /scratch/wc3013
-git clone https://github.com/hpcaitech/Open-Sora Open-Sora-v2
-cd Open-Sora-v2
+git clone https://github.com/hpcaitech/Open-Sora open-sora-v2.0-experiment
+cd open-sora-v2.0-experiment
 
 # 2. Create environment (submit as SLURM job)
 sbatch env_setup/01_setup_environment.sbatch
@@ -48,7 +48,7 @@ Creates the `opensora20` conda environment with all required packages:
 
 **Run:**
 ```bash
-cd /scratch/wc3013/Open-Sora-v2
+cd /scratch/wc3013/open-sora-v2.0-experiment
 sbatch env_setup/01_setup_environment.sbatch
 
 # Monitor progress
@@ -178,7 +178,7 @@ python -c "import flash_attn; print(flash_attn.__version__)"
 /scratch/wc3013/
 ├── conda-envs/
 │   └── opensora20/           # Conda environment
-├── Open-Sora-v2/
+├── open-sora-v2.0-experiment/
 │   ├── ckpts/                # Model checkpoints
 │   │   ├── Open_Sora_v2.safetensors
 │   │   ├── hunyuan_vae.safetensors
@@ -204,13 +204,13 @@ Add this to your SLURM scripts:
 # ... other SLURM options ...
 
 # Setup environment
-source /scratch/wc3013/Open-Sora-v2/env_setup/00_set_scratch_env.sh
+source /scratch/wc3013/open-sora-v2.0-experiment/env_setup/00_set_scratch_env.sh
 module purge
 module load anaconda3/2025.06
 source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 conda activate /scratch/wc3013/conda-envs/opensora20
 
-cd /scratch/wc3013/Open-Sora-v2
+cd /scratch/wc3013/open-sora-v2.0-experiment
 
 # Your commands here
 torchrun --nproc_per_node 1 --standalone scripts/diffusion/inference.py ...

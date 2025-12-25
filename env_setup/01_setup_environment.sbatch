@@ -45,7 +45,7 @@ echo ""
 # ==============================================================================
 SCRATCH_BASE="/scratch/wc3013"
 ENV_PATH="${SCRATCH_BASE}/conda-envs/opensora20"
-PROJECT_ROOT="${SCRATCH_BASE}/Open-Sora-v2"
+PROJECT_ROOT="${SCRATCH_BASE}/open-sora-v2.0-experiment"
 
 # Expected versions
 EXPECTED_PYTHON="3.10"

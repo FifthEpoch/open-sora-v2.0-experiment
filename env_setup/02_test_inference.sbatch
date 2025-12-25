@@ -37,7 +37,7 @@ echo ""
 # Configuration
 # ==============================================================================
 SCRATCH_BASE="/scratch/wc3013"
-PROJECT_ROOT="${SCRATCH_BASE}/Open-Sora-v2"
+PROJECT_ROOT="${SCRATCH_BASE}/open-sora-v2.0-experiment"
 ENV_PATH="${SCRATCH_BASE}/conda-envs/opensora20"
 OUTPUT_DIR="${PROJECT_ROOT}/test_samples"
 
