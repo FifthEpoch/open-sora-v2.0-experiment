@@ -1,0 +1,4 @@
+# SLURM log files
+slurm_log/*.out
+slurm_log/*.err
+
