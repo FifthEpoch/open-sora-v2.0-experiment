@@ -289,7 +289,8 @@ python -c "
 import colossalai
 import liger_kernel
 print(f'ColossalAI: {colossalai.__version__}')
-print(f'liger-kernel: {liger_kernel.__version__}')
+# liger_kernel doesn't expose __version__, just verify import works
+print('liger-kernel: imported successfully (no __version__ attribute)')
 print('ColossalAI and liger-kernel installed successfully!')
 "
 
