@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB
 #SBATCH --time=01:00:00
-#SBATCH --output=env_setup/slurm_log/test_infer_%j.out
-#SBATCH --error=env_setup/slurm_log/test_infer_%j.err
+#SBATCH --output=slurm_log/test_infer_%j.out
+#SBATCH --error=slurm_log/test_infer_%j.err
 
 # ==============================================================================
 # Test Open-Sora v2.0 Inference

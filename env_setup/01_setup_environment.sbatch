@@ -6,8 +6,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64GB
 #SBATCH --time=03:00:00
-#SBATCH --output=env_setup/slurm_log/setup_env_%j.out
-#SBATCH --error=env_setup/slurm_log/setup_env_%j.err
+#SBATCH --output=slurm_log/setup_env_%j.out
+#SBATCH --error=slurm_log/setup_env_%j.err
 
 # ==============================================================================
 # Comprehensive Open-Sora v2.0 Environment Setup
@@ -70,6 +70,13 @@ echo "Loading conda module..."
 module purge
 module load anaconda3/2025.06
 source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
+
+# Accept Conda Terms of Service (required for non-interactive use)
+echo ""
+echo "Accepting Conda Terms of Service..."
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main || true
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r || true
+conda tos accept --override-channels --channel conda-forge || true
 
 # Configure conda to use scratch directories
 conda config --prepend envs_dirs "${SCRATCH_BASE}/conda-envs" 2>/dev/null || true

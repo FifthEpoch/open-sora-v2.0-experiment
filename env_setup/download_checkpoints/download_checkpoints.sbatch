@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32GB
 #SBATCH --time=04:00:00
-#SBATCH --output=env_setup/slurm_log/download_ckpts_%j.out
-#SBATCH --error=env_setup/slurm_log/download_ckpts_%j.err
+#SBATCH --output=slurm_log/download_ckpts_%j.out
+#SBATCH --error=slurm_log/download_ckpts_%j.err
 
 # ==============================================================================
 # Download Open-Sora v2.0 Model Checkpoints
