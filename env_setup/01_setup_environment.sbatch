@@ -391,7 +391,7 @@ print(f'  PyTorch: {torch.__version__}')
 print(f'  torchvision: {torchvision.__version__}')
 print(f'  xformers: {xformers.__version__}')
 print(f'  ColossalAI: {colossalai.__version__}')
-print(f'  liger-kernel: {liger_kernel.__version__}')
+print(f'  liger-kernel: imported successfully')  # no __version__ attribute
 print(f'  PyAV: {av.__version__}')
 print(f'  Pandas: {pd.__version__}')
 print()
