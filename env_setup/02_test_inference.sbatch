@@ -64,106 +64,48 @@ cd "${PROJECT_ROOT}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 echo "PYTHONPATH: ${PYTHONPATH}"
 
-# Clear any cached bytecode that might be stale
-echo "Clearing Python cache..."
-find "${PROJECT_ROOT}/opensora" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-find "${PROJECT_ROOT}" -name "*.pyc" -delete 2>/dev/null || true
+# Verify which python we're using
+echo ""
+echo "Python environment check:"
+echo "  which python: $(which python)"
+echo "  python version: $(python --version)"
+echo ""
 
-# List the opensora directory structure to verify files exist
-echo "Verifying opensora directory structure..."
-ls -la "${PROJECT_ROOT}/opensora/"
-ls -la "${PROJECT_ROOT}/opensora/datasets/"
+# Quick torch check - this should work if env is activated properly
+echo "Quick dependency check..."
+python -c "import torch; print(f'torch version: {torch.__version__}')" || {
+    echo "ERROR: torch not found! Conda environment may not be activated properly."
+    echo "CONDA_PREFIX: ${CONDA_PREFIX:-not set}"
+    echo "PATH: ${PATH}"
+    exit 1
+}
 
-# Force reinstall opensora to ensure clean installation
-echo "Reinstalling opensora package in editable mode..."
-pip uninstall opensora -y 2>/dev/null || true
+python -c "import mmengine; print('mmengine: OK')" || {
+    echo "ERROR: mmengine not found!"
+    exit 1
+}
 
-# Remove any stale egg-info
-rm -rf "${PROJECT_ROOT}/opensora.egg-info" 2>/dev/null || true
+echo "Core dependencies OK"
+echo ""
 
-pip install -e . --no-deps
+# Install opensora in editable mode
+echo "Installing opensora package in editable mode..."
+pip install -e . --no-deps 2>&1 | tail -5
 
-# Verify opensora.datasets can be imported
-echo "Verifying opensora installation..."
-python -c "
-import sys
-import traceback
-print(f'Python executable: {sys.executable}')
-print(f'Python path: {sys.path[:3]}...')
+# Verify opensora can be imported
+echo ""
+echo "Verifying opensora package..."
+python -c "from opensora.registry import DATASETS; print('opensora.registry: OK')" || {
+    echo "ERROR: Failed to import opensora.registry"
+    exit 1
+}
 
-# Check critical dependencies first (including mmengine which is needed for registry)
-deps = ['pandas', 'numpy', 'torch', 'av', 'decord', 'mmengine', 'torchvision', 'PIL']
-for dep in deps:
-    try:
-        __import__(dep)
-        print(f'  {dep}: OK')
-    except ImportError as e:
-        print(f'  {dep}: MISSING - {e}')
+python -c "from opensora.datasets.dataloader import prepare_dataloader; print('opensora.datasets: OK')" || {
+    echo "ERROR: Failed to import opensora.datasets"
+    exit 1
+}
 
-# Check if opensora directory exists and has the right structure
-import os
-opensora_path = os.path.join(sys.path[1], 'opensora')  # sys.path[1] should be PROJECT_ROOT
-datasets_path = os.path.join(opensora_path, 'datasets')
-print(f'Checking paths:')
-print(f'  opensora_path: {opensora_path} - exists: {os.path.isdir(opensora_path)}')
-print(f'  datasets_path: {datasets_path} - exists: {os.path.isdir(datasets_path)}')
-print(f'  datasets/__init__.py: {os.path.isfile(os.path.join(datasets_path, \"__init__.py\"))}')
-
-try:
-    import opensora
-    print(f'opensora location: {opensora.__file__}')
-    print(f'opensora.__path__: {opensora.__path__}')
-except Exception as e:
-    print(f'opensora import failed: {e}')
-    traceback.print_exc()
-    sys.exit(1)
-
-# Check if datasets is in opensora's namespace
-print(f'opensora dir: {[x for x in dir(opensora) if not x.startswith(\"_\")]}')
-
-# Try importing registry first (this is what usually fails)
-try:
-    from opensora.registry import DATASETS
-    print('opensora.registry: OK')
-except Exception as e:
-    print(f'opensora.registry import failed: {e}')
-    traceback.print_exc()
-    sys.exit(1)
-
-try:
-    # Try step by step
-    import opensora.datasets
-    print(f'opensora.datasets: OK - {opensora.datasets.__file__}')
-except Exception as e:
-    print(f'opensora.datasets import failed: {e}')
-    traceback.print_exc()
-    sys.exit(1)
-
-try:
-    from opensora.datasets.dataloader import prepare_dataloader
-    print('opensora.datasets.dataloader: OK')
-except Exception as e:
-    print(f'opensora.datasets.dataloader import failed: {e}')
-    traceback.print_exc()
-    sys.exit(1)
-
-print('opensora package verified successfully!')
-"
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: opensora package verification failed!"
-    echo "Attempting alternative installation..."
-    
-    # Try with sys.path insert
-    export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
-    python -c "import sys; sys.path.insert(0, '${PROJECT_ROOT}'); from opensora.datasets.dataloader import prepare_dataloader; print('OK with sys.path')"
-    
-    if [ $? -ne 0 ]; then
-        echo "FATAL: Cannot import opensora.datasets"
-        exit 1
-    fi
-fi
-
+echo "opensora package verified successfully!"
 echo ""
 
 # ==============================================================================
