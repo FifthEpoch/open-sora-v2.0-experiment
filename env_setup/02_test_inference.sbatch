@@ -60,6 +60,16 @@ echo ""
 
 cd "${PROJECT_ROOT}"
 
+# Add project root to PYTHONPATH for opensora imports
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+echo "PYTHONPATH: ${PYTHONPATH}"
+
+# Ensure opensora is installed in editable mode
+if ! python -c "import opensora" 2>/dev/null; then
+    echo "Installing opensora package in editable mode..."
+    pip install -e . --quiet
+fi
+
 # ==============================================================================
 # Verify Checkpoints
 # ==============================================================================
