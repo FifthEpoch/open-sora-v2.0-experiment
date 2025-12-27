@@ -64,9 +64,23 @@ cd "${PROJECT_ROOT}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 echo "PYTHONPATH: ${PYTHONPATH}"
 
+# Clear any cached bytecode that might be stale
+echo "Clearing Python cache..."
+find "${PROJECT_ROOT}/opensora" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${PROJECT_ROOT}" -name "*.pyc" -delete 2>/dev/null || true
+
+# List the opensora directory structure to verify files exist
+echo "Verifying opensora directory structure..."
+ls -la "${PROJECT_ROOT}/opensora/"
+ls -la "${PROJECT_ROOT}/opensora/datasets/"
+
 # Force reinstall opensora to ensure clean installation
 echo "Reinstalling opensora package in editable mode..."
 pip uninstall opensora -y 2>/dev/null || true
+
+# Remove any stale egg-info
+rm -rf "${PROJECT_ROOT}/opensora.egg-info" 2>/dev/null || true
+
 pip install -e . --no-deps
 
 # Verify opensora.datasets can be imported
@@ -86,13 +100,26 @@ for dep in deps:
     except ImportError as e:
         print(f'  {dep}: MISSING - {e}')
 
+# Check if opensora directory exists and has the right structure
+import os
+opensora_path = os.path.join(sys.path[1], 'opensora')  # sys.path[1] should be PROJECT_ROOT
+datasets_path = os.path.join(opensora_path, 'datasets')
+print(f'Checking paths:')
+print(f'  opensora_path: {opensora_path} - exists: {os.path.isdir(opensora_path)}')
+print(f'  datasets_path: {datasets_path} - exists: {os.path.isdir(datasets_path)}')
+print(f'  datasets/__init__.py: {os.path.isfile(os.path.join(datasets_path, \"__init__.py\"))}')
+
 try:
     import opensora
     print(f'opensora location: {opensora.__file__}')
+    print(f'opensora.__path__: {opensora.__path__}')
 except Exception as e:
     print(f'opensora import failed: {e}')
     traceback.print_exc()
     sys.exit(1)
+
+# Check if datasets is in opensora's namespace
+print(f'opensora dir: {[x for x in dir(opensora) if not x.startswith(\"_\")]}')
 
 # Try importing registry first (this is what usually fails)
 try:
@@ -100,6 +127,15 @@ try:
     print('opensora.registry: OK')
 except Exception as e:
     print(f'opensora.registry import failed: {e}')
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    # Try step by step
+    import opensora.datasets
+    print(f'opensora.datasets: OK - {opensora.datasets.__file__}')
+except Exception as e:
+    print(f'opensora.datasets import failed: {e}')
     traceback.print_exc()
     sys.exit(1)
 
