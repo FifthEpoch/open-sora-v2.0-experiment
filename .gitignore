@@ -195,4 +195,5 @@ package.json
 exps
 ckpts
 flash-attention
-datasets
+# datasets - REMOVED: this was incorrectly ignoring opensora/datasets/ source code
+# Use /datasets to only ignore root-level datasets directory if needed
