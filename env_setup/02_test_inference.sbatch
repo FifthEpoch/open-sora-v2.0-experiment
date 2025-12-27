@@ -47,13 +47,17 @@ OUTPUT_DIR="${PROJECT_ROOT}/test_samples"
 echo "Setting up environment..."
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
 
-# Load conda
+# Load conda - but don't let the module override our environment's PATH
 module purge
 module load anaconda3/2025.06
 source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 
 # Activate environment
 conda activate "${ENV_PATH}"
+
+# CRITICAL: Ensure conda environment's bin comes FIRST in PATH
+# The module load can put system anaconda before our env
+export PATH="${CONDA_PREFIX}/bin:${PATH}"
 
 echo "Environment activated: ${CONDA_PREFIX}"
 echo ""
@@ -68,8 +72,17 @@ echo "PYTHONPATH: ${PYTHONPATH}"
 echo ""
 echo "Python environment check:"
 echo "  which python: $(which python)"
+echo "  Expected: ${CONDA_PREFIX}/bin/python"
 echo "  python version: $(python --version)"
 echo ""
+
+# Sanity check - make sure we're using the right python
+if [[ "$(which python)" != "${CONDA_PREFIX}/bin/python" ]]; then
+    echo "ERROR: Wrong Python is being used!"
+    echo "  Got: $(which python)"
+    echo "  Expected: ${CONDA_PREFIX}/bin/python"
+    exit 1
+fi
 
 # Quick torch check - this should work if env is activated properly
 echo "Quick dependency check..."
