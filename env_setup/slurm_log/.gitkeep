@@ -1,0 +1,4 @@
+# This directory stores SLURM job output logs
+# Files are ignored via .gitignore
+
+
