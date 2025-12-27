@@ -77,8 +77,8 @@ import traceback
 print(f'Python executable: {sys.executable}')
 print(f'Python path: {sys.path[:3]}...')
 
-# Check critical dependencies first
-deps = ['pandas', 'numpy', 'torch', 'av', 'decord']
+# Check critical dependencies first (including mmengine which is needed for registry)
+deps = ['pandas', 'numpy', 'torch', 'av', 'decord', 'mmengine', 'torchvision', 'PIL']
 for dep in deps:
     try:
         __import__(dep)
@@ -91,6 +91,15 @@ try:
     print(f'opensora location: {opensora.__file__}')
 except Exception as e:
     print(f'opensora import failed: {e}')
+    traceback.print_exc()
+    sys.exit(1)
+
+# Try importing registry first (this is what usually fails)
+try:
+    from opensora.registry import DATASETS
+    print('opensora.registry: OK')
+except Exception as e:
+    print(f'opensora.registry import failed: {e}')
     traceback.print_exc()
     sys.exit(1)
 
