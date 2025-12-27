@@ -13,8 +13,8 @@ import torchvision
 import torchvision.transforms as transforms
 from PIL import Image
 from torchvision.datasets.folder import IMG_EXTENSIONS, pil_loader
-from torchvision.io import write_video
 from torchvision.utils import save_image
+import imageio
 
 from . import video_transforms
 from .read_video import read_video
@@ -228,7 +228,8 @@ def save_sample(
 
         x = x.mul_(255).add_(0.5).clamp_(0, 255).permute(1, 2, 3, 0).to("cpu", torch.uint8)
 
-        write_video(save_path, x, fps=fps, video_codec="h264", options={"crf": str(crf)})
+        # Use imageio instead of torchvision.io.write_video to avoid PyAV compatibility issues
+        imageio.mimwrite(save_path, x.numpy(), fps=fps, codec="libx264", output_params=["-crf", str(crf)])
     if verbose:
         print(f"Saved to {save_path}")
     return save_path

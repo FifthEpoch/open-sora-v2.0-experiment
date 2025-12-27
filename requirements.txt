@@ -5,6 +5,8 @@ mmengine>=0.10.3
 ftfy>=6.2.0 # for t5
 accelerate>=0.29.2 # for t5
 av==13.1.0 # for video loading
+imageio>=2.34.0  # for video saving (more stable than torchvision.io.write_video)
+imageio-ffmpeg>=0.4.9  # ffmpeg backend for imageio
 liger-kernel==0.5.2
 pandas>=2.0.3
 pandarallel>=1.6.5
