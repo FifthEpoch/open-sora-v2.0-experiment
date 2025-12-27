@@ -12,17 +12,19 @@
 # ==============================================================================
 # Test Open-Sora v2.0 Video-to-Video (V2V) Inference
 # ==============================================================================
-# This script tests video-to-video continuation capability.
-# It uses v2v_head_half mode which conditions on the first half of a video
-# and generates a continuation.
+# This script tests video-to-video continuation using v2v_head mode.
+# v2v_head conditions on the first 33 frames (9 latent frames) and generates
+# a continuation of the video.
 #
 # Modes available in Open-Sora v2.0:
 #   - t2v: text-to-video
-#   - i2v_head: image-to-video (image at head)
-#   - i2v_tail: image-to-video (image at tail)
-#   - i2v_loop: connect images
-#   - v2v_head_half: video extension with first half as condition
-#   - v2v_tail_half: video extension with second half as condition
+#   - i2v_head: image-to-video (1 frame at head)
+#   - i2v_tail: image-to-video (1 frame at tail)
+#   - i2v_loop: connect first and last frames
+#   - v2v_head: video extension with first 33 frames as condition
+#   - v2v_tail: video extension with last 33 frames as condition
+#   - v2v_head_easy: video extension with first 65 frames as condition
+#   - v2v_tail_easy: video extension with last 65 frames as condition
 # ==============================================================================
 
 set -euo pipefail
@@ -151,12 +153,12 @@ echo ""
 # Run V2V Inference Test
 # ==============================================================================
 echo "=============================================================================="
-echo "Step 2: Running V2V Inference Test (v2v_head_half)"
+echo "Step 2: Running V2V Inference Test (v2v_head)"
 echo "=============================================================================="
-echo "Conditioning: First half of ${COND_VIDEO}"
+echo "Conditioning: First 33 frames of ${COND_VIDEO}"
 echo "Prompt: Continuing the scene with natural motion"
 echo "Resolution: 256px"
-echo "Frames: 33"
+echo "Output frames: 65 (33 conditioning + 32 generated)"
 echo ""
 
 MASTER_PORT=$((29500 + RANDOM % 1000))
@@ -164,14 +166,15 @@ echo "Using MASTER_PORT: ${MASTER_PORT}"
 
 START_TIME=$(date +%s)
 
-# Run V2V with first-half conditioning
+# Run V2V with first 33 frames as conditioning
+# Output will be 65 frames total (33 conditioning + 32 continuation)
 torchrun --nproc_per_node 1 --standalone --master_port ${MASTER_PORT} scripts/diffusion/inference.py \
     configs/diffusion/inference/256px.py \
     --save-dir "${OUTPUT_DIR}/v2v_test" \
-    --cond_type v2v_head_half \
+    --cond_type v2v_head \
     --ref "${COND_VIDEO}" \
     --prompt "The scene continues with natural motion" \
-    --sampling_option.num_frames 33 \
+    --sampling_option.num_frames 65 \
     --sampling_option.num_steps 25 \
     --seed 42
 
@@ -214,14 +217,13 @@ echo "Conditioning video: ${COND_VIDEO}"
 echo "Output directory: ${OUTPUT_DIR}/v2v_test"
 echo "Inference time: ${ELAPSED} seconds"
 echo ""
-echo "Note: Open-Sora v2.0 v2v_head_half mode conditions on the first half"
-echo "of the input video and generates a continuation."
+echo "Note: Open-Sora v2.0 v2v_head mode uses the first 33 frames as conditioning"
+echo "(9 latent frames after VAE encoding with 4:1 temporal compression)."
 echo ""
-echo "For your TTA experiments with 22-frame conditioning (similar to v1.3),"
-echo "you may need to:"
-echo "  1. Pre-process videos to extract first 22 frames as conditioning"
-echo "  2. Use i2v_head with the 22nd frame as the condition image"
-echo "  3. Or use v2v_head_half with a video cropped to your desired length"
+echo "For TTA experiments:"
+echo "  - Conditioning: 33 frames (fixed by v2v_head mode)"
+echo "  - Fine-tuning: Uses only conditioning frames (no ground truth)"
+echo "  - Evaluation: Compare generated continuation vs ground truth"
 echo ""
 echo "End time: $(date)"
 echo "=============================================================================="
