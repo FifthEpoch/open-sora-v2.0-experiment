@@ -173,8 +173,12 @@ mkdir -p "${OUTPUT_DIR}"
 # Record start time
 START_TIME=$(date +%s)
 
+# Use a random port to avoid conflicts with other jobs on the same node
+MASTER_PORT=$((29500 + RANDOM % 1000))
+echo "Using MASTER_PORT: ${MASTER_PORT}"
+
 # Run inference with reduced frames for quick test
-torchrun --nproc_per_node 1 --standalone scripts/diffusion/inference.py \
+torchrun --nproc_per_node 1 --standalone --master_port ${MASTER_PORT} scripts/diffusion/inference.py \
     configs/diffusion/inference/256px.py \
     --save-dir "${OUTPUT_DIR}" \
     --prompt "A cat walking on grass" \
