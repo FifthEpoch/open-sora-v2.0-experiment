@@ -73,14 +73,34 @@ pip install -e . --no-deps
 echo "Verifying opensora installation..."
 python -c "
 import sys
+import traceback
 print(f'Python executable: {sys.executable}')
 print(f'Python path: {sys.path[:3]}...')
 
-import opensora
-print(f'opensora location: {opensora.__file__}')
+# Check critical dependencies first
+deps = ['pandas', 'numpy', 'torch', 'av', 'decord']
+for dep in deps:
+    try:
+        __import__(dep)
+        print(f'  {dep}: OK')
+    except ImportError as e:
+        print(f'  {dep}: MISSING - {e}')
 
-from opensora.datasets.dataloader import prepare_dataloader
-print('opensora.datasets.dataloader: OK')
+try:
+    import opensora
+    print(f'opensora location: {opensora.__file__}')
+except Exception as e:
+    print(f'opensora import failed: {e}')
+    traceback.print_exc()
+    sys.exit(1)
+
+try:
+    from opensora.datasets.dataloader import prepare_dataloader
+    print('opensora.datasets.dataloader: OK')
+except Exception as e:
+    print(f'opensora.datasets.dataloader import failed: {e}')
+    traceback.print_exc()
+    sys.exit(1)
 
 print('opensora package verified successfully!')
 "
