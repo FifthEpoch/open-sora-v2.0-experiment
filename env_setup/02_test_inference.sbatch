@@ -64,11 +64,42 @@ cd "${PROJECT_ROOT}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 echo "PYTHONPATH: ${PYTHONPATH}"
 
-# Ensure opensora is installed in editable mode
-if ! python -c "import opensora" 2>/dev/null; then
-    echo "Installing opensora package in editable mode..."
-    pip install -e . --quiet
+# Force reinstall opensora to ensure clean installation
+echo "Reinstalling opensora package in editable mode..."
+pip uninstall opensora -y 2>/dev/null || true
+pip install -e . --no-deps
+
+# Verify opensora.datasets can be imported
+echo "Verifying opensora installation..."
+python -c "
+import sys
+print(f'Python executable: {sys.executable}')
+print(f'Python path: {sys.path[:3]}...')
+
+import opensora
+print(f'opensora location: {opensora.__file__}')
+
+from opensora.datasets.dataloader import prepare_dataloader
+print('opensora.datasets.dataloader: OK')
+
+print('opensora package verified successfully!')
+"
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: opensora package verification failed!"
+    echo "Attempting alternative installation..."
+    
+    # Try with sys.path insert
+    export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH}"
+    python -c "import sys; sys.path.insert(0, '${PROJECT_ROOT}'); from opensora.datasets.dataloader import prepare_dataloader; print('OK with sys.path')"
+    
+    if [ $? -ne 0 ]; then
+        echo "FATAL: Cannot import opensora.datasets"
+        exit 1
+    fi
 fi
+
+echo ""
 
 # ==============================================================================
 # Verify Checkpoints
