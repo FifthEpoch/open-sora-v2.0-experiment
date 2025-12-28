@@ -1,25 +1,24 @@
 #!/bin/bash
-#SBATCH --job-name=baseline_gen
-#SBATCH --output=lora_experiment/logs/baseline_%j.out
-#SBATCH --error=lora_experiment/logs/baseline_%j.err
-#SBATCH --time=24:00:00
-#SBATCH --mem=64G
+#SBATCH --job-name=eval_tta
+#SBATCH --output=lora_experiment/logs/eval_%j.out
+#SBATCH --error=lora_experiment/logs/eval_%j.err
+#SBATCH --time=4:00:00
+#SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 
 # ==============================================================================
-# Generate Baseline Video Continuations for Open-Sora v2.0
+# Evaluate TTA Results for Open-Sora v2.0
 # ==============================================================================
-# This script generates video continuations using the vanilla Open-Sora v2.0
-# model without any LoRA fine-tuning. These serve as the baseline for comparison.
+# This script computes metrics comparing baseline and LoRA TTA results
+# against ground truth.
 # ==============================================================================
 
 echo "=============================================================================="
-echo "Baseline Generation for Open-Sora v2.0"
+echo "Evaluation for Open-Sora v2.0 TTA Experiments"
 echo "=============================================================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
-echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -n1)"
 echo "Start time: $(date)"
 echo "=============================================================================="
 
@@ -46,9 +45,8 @@ echo "Python: $(which python) - $(python --version)"
 # Set PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-# Reinstall opensora in editable mode
-pip uninstall opensora -y 2>/dev/null || true
-pip install -e "${PROJECT_ROOT}" --quiet
+# Install additional dependencies for evaluation
+pip install lpips scikit-image --quiet
 
 # Create logs directory
 mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
@@ -57,41 +55,46 @@ mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
 # Configuration
 # ==============================================================================
 
-DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
-OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/baseline"
+GT_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
+BASELINE_DIR="${PROJECT_ROOT}/lora_experiment/results/baseline"
+LORA_DIR="${PROJECT_ROOT}/lora_experiment/results/lora_r16_lr2e4_100steps"
+OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/evaluation"
 
 # Override with environment variables if set
-DATA_DIR="${BASELINE_DATA_DIR:-$DATA_DIR}"
-OUTPUT_DIR="${BASELINE_OUTPUT_DIR:-$OUTPUT_DIR}"
-
-NUM_STEPS="${BASELINE_NUM_STEPS:-25}"
-GUIDANCE="${BASELINE_GUIDANCE:-7.5}"
-GUIDANCE_IMG="${BASELINE_GUIDANCE_IMG:-3.0}"
-MAX_VIDEOS="${BASELINE_MAX_VIDEOS:-}"
-SEED="${BASELINE_SEED:-42}"
+GT_DIR="${EVAL_GT_DIR:-$GT_DIR}"
+BASELINE_DIR="${EVAL_BASELINE_DIR:-$BASELINE_DIR}"
+LORA_DIR="${EVAL_LORA_DIR:-$LORA_DIR}"
+OUTPUT_DIR="${EVAL_OUTPUT_DIR:-$OUTPUT_DIR}"
+MAX_VIDEOS="${EVAL_MAX_VIDEOS:-}"
 
 echo ""
 echo "Configuration:"
-echo "  Data directory: ${DATA_DIR}"
+echo "  Ground truth directory: ${GT_DIR}"
+echo "  Baseline directory: ${BASELINE_DIR}"
+echo "  LoRA directory: ${LORA_DIR}"
 echo "  Output directory: ${OUTPUT_DIR}"
-echo "  Diffusion steps: ${NUM_STEPS}"
-echo "  Guidance: ${GUIDANCE}"
-echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
-echo "  Seed: ${SEED}"
 echo ""
 
 # ==============================================================================
-# Run Baseline Generation
+# Run Evaluation
 # ==============================================================================
 
-CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/generate_baseline.py \
-    --data-dir ${DATA_DIR} \
-    --output-dir ${OUTPUT_DIR} \
-    --num-steps ${NUM_STEPS} \
-    --guidance ${GUIDANCE} \
-    --guidance-img ${GUIDANCE_IMG} \
-    --seed ${SEED}"
+CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/evaluate.py \
+    --gt-dir ${GT_DIR} \
+    --output-dir ${OUTPUT_DIR}"
+
+if [ -d "${BASELINE_DIR}" ]; then
+    CMD="${CMD} --baseline-dir ${BASELINE_DIR}"
+else
+    echo "Warning: Baseline directory not found, skipping baseline evaluation"
+fi
+
+if [ -d "${LORA_DIR}" ]; then
+    CMD="${CMD} --lora-dir ${LORA_DIR}"
+else
+    echo "Warning: LoRA directory not found, skipping LoRA evaluation"
+fi
 
 if [ -n "${MAX_VIDEOS}" ]; then
     CMD="${CMD} --max-videos ${MAX_VIDEOS}"
@@ -104,8 +107,9 @@ eval ${CMD}
 
 echo ""
 echo "=============================================================================="
-echo "Baseline Generation Complete!"
+echo "Evaluation Complete!"
 echo "=============================================================================="
 echo "Output directory: ${OUTPUT_DIR}"
 echo "End time: $(date)"
 echo "=============================================================================="
+

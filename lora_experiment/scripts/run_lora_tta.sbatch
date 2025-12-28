@@ -1,114 +1,143 @@
 #!/bin/bash
-#SBATCH --job-name=lora_tta_v2
-#SBATCH --gres=gpu:1
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=128GB
+#SBATCH --job-name=lora_tta
+#SBATCH --output=lora_experiment/logs/lora_tta_%j.out
+#SBATCH --error=lora_experiment/logs/lora_tta_%j.err
 #SBATCH --time=48:00:00
-#SBATCH --output=lora_experiment/logs/tta_%j.out
-#SBATCH --error=lora_experiment/logs/tta_%j.err
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
 
 # ==============================================================================
-# LoRA Test-Time Adaptation Experiment
+# LoRA Test-Time Adaptation for Open-Sora v2.0
 # ==============================================================================
-# This script runs LoRA TTA on UCF-101 videos.
-# It fine-tunes LoRA adapters on conditioning frames for each video,
-# then generates continuations.
-#
-# Estimated runtime: ~2 min per video (100 steps + inference)
-# For 1000 videos: ~33 hours
+# This script performs test-time adaptation by fine-tuning LoRA adapters on
+# conditioning frames for each video, then generating continuations.
 # ==============================================================================
-
-set -euo pipefail
 
 echo "=============================================================================="
-echo "LoRA TTA Experiment for Open-Sora v2.0"
+echo "LoRA Test-Time Adaptation for Open-Sora v2.0"
 echo "=============================================================================="
 echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURM_NODELIST"
-echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
+echo "Node: $(hostname)"
+echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -n1)"
 echo "Start time: $(date)"
 echo "=============================================================================="
 
-# Configuration
-SCRATCH_BASE="/scratch/wc3013"
-PROJECT_ROOT="${SCRATCH_BASE}/open-sora-v2.0-experiment"
-ENV_PATH="${SCRATCH_BASE}/conda-envs/opensora20"
+# ==============================================================================
+# Environment Setup
+# ==============================================================================
 
-# Experiment settings
-DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
-OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/rank${LORA_RANK:-16}_lr${LEARNING_RATE:-2e4}_${NUM_STEPS:-100}steps"
+# Source the scratch environment setup
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="${SCRIPT_DIR}/../.."
 
-# LoRA hyperparameters (can be overridden via environment variables)
-LORA_RANK="${LORA_RANK:-16}"
-LORA_ALPHA="${LORA_ALPHA:-32}"
-LEARNING_RATE="${LEARNING_RATE:-2e-4}"
-NUM_STEPS="${NUM_STEPS:-100}"
-
-# Create directories
-mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
-mkdir -p "${OUTPUT_DIR}"
-
-# Setup environment
-echo ""
-echo "Setting up environment..."
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
 
-module purge
+# Load modules
 module load anaconda3/2025.06
-source /share/apps/anaconda3/2025.06/etc/profile.d/conda.sh
 
-conda activate "${ENV_PATH}"
+# Activate conda environment
+conda activate opensora20
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
-export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 echo "Environment activated: ${CONDA_PREFIX}"
 echo "Python: $(which python) - $(python --version)"
 
-cd "${PROJECT_ROOT}"
-pip install -e . --no-deps 2>&1 | tail -2
+# Set PYTHONPATH
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-# Check data
-if [ ! -f "${DATA_DIR}/metadata.csv" ]; then
-    echo "ERROR: Dataset not preprocessed!"
-    echo "Please run: sbatch lora_experiment/scripts/preprocess_ucf101.sbatch"
-    exit 1
-fi
+# Reinstall opensora in editable mode
+pip uninstall opensora -y 2>/dev/null || true
+pip install -e "${PROJECT_ROOT}" --quiet
+
+# Create logs directory
+mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
+
+# ==============================================================================
+# Configuration
+# ==============================================================================
+
+DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
+
+# LoRA hyperparameters - can be overridden by environment variables
+LORA_RANK="${LORA_RANK:-16}"
+LORA_ALPHA="${LORA_ALPHA:-32}"
+LEARNING_RATE="${LEARNING_RATE:-2e-4}"
+NUM_STEPS="${NUM_STEPS:-100}"
+WARMUP_STEPS="${WARMUP_STEPS:-5}"
+TARGET_MLP="${TARGET_MLP:-false}"
+
+# Inference parameters
+INFERENCE_STEPS="${INFERENCE_STEPS:-25}"
+GUIDANCE="${GUIDANCE:-7.5}"
+GUIDANCE_IMG="${GUIDANCE_IMG:-3.0}"
+
+# Other parameters
+MAX_VIDEOS="${MAX_VIDEOS:-}"
+SEED="${SEED:-42}"
+SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
+
+# Construct output directory name
+OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/lora_r${LORA_RANK}_lr${LEARNING_RATE}_${NUM_STEPS}steps"
+OUTPUT_DIR="${LORA_OUTPUT_DIR:-$OUTPUT_DIR}"
+DATA_DIR="${LORA_DATA_DIR:-$DATA_DIR}"
 
 echo ""
-echo "=============================================================================="
-echo "Experiment Configuration"
-echo "=============================================================================="
-echo "Data directory: ${DATA_DIR}"
-echo "Output directory: ${OUTPUT_DIR}"
-echo "LoRA rank: ${LORA_RANK}"
-echo "LoRA alpha: ${LORA_ALPHA}"
-echo "Learning rate: ${LEARNING_RATE}"
-echo "Fine-tuning steps: ${NUM_STEPS}"
-echo "=============================================================================="
+echo "Configuration:"
+echo "  Data directory: ${DATA_DIR}"
+echo "  Output directory: ${OUTPUT_DIR}"
+echo "  LoRA rank: ${LORA_RANK}"
+echo "  LoRA alpha: ${LORA_ALPHA}"
+echo "  Learning rate: ${LEARNING_RATE}"
+echo "  Training steps: ${NUM_STEPS}"
+echo "  Warmup steps: ${WARMUP_STEPS}"
+echo "  Target MLP: ${TARGET_MLP}"
+echo "  Inference steps: ${INFERENCE_STEPS}"
+echo "  Guidance: ${GUIDANCE}"
+echo "  Image guidance: ${GUIDANCE_IMG}"
+echo "  Max videos: ${MAX_VIDEOS:-all}"
+echo "  Seed: ${SEED}"
+echo "  Save LoRA weights: ${SAVE_LORA_WEIGHTS}"
 echo ""
 
-# Use random port for distributed
-MASTER_PORT=$((29500 + RANDOM % 1000))
-export MASTER_PORT
+# ==============================================================================
+# Run LoRA TTA
+# ==============================================================================
 
-# Run TTA experiment
-python lora_experiment/scripts/run_lora_tta.py \
-    --data-dir "${DATA_DIR}" \
-    --output-dir "${OUTPUT_DIR}" \
+CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/run_lora_tta.py \
+    --data-dir ${DATA_DIR} \
+    --output-dir ${OUTPUT_DIR} \
     --lora-rank ${LORA_RANK} \
     --lora-alpha ${LORA_ALPHA} \
     --learning-rate ${LEARNING_RATE} \
     --num-steps ${NUM_STEPS} \
-    --dtype bf16 \
-    --seed 42
+    --warmup-steps ${WARMUP_STEPS} \
+    --inference-steps ${INFERENCE_STEPS} \
+    --guidance ${GUIDANCE} \
+    --guidance-img ${GUIDANCE_IMG} \
+    --seed ${SEED}"
+
+if [ "${TARGET_MLP}" = "true" ]; then
+    CMD="${CMD} --target-mlp"
+fi
+
+if [ "${SAVE_LORA_WEIGHTS}" = "true" ]; then
+    CMD="${CMD} --save-lora-weights"
+fi
+
+if [ -n "${MAX_VIDEOS}" ]; then
+    CMD="${CMD} --max-videos ${MAX_VIDEOS}"
+fi
+
+echo "Running: ${CMD}"
+echo ""
+
+eval ${CMD}
 
 echo ""
 echo "=============================================================================="
-echo "Experiment Complete!"
+echo "LoRA TTA Complete!"
 echo "=============================================================================="
-echo "Results saved to: ${OUTPUT_DIR}"
+echo "Output directory: ${OUTPUT_DIR}"
 echo "End time: $(date)"
 echo "=============================================================================="
-

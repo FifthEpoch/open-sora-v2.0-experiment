@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Evaluate video continuation quality for Open-Sora v2.0 TTA experiments.
+Evaluate generated videos against ground truth for Open-Sora v2.0 TTA experiments.
 
-This script computes metrics comparing generated continuations with ground truth:
+This script computes various metrics comparing generated videos to ground truth:
 - PSNR (Peak Signal-to-Noise Ratio)
 - SSIM (Structural Similarity Index)
 - LPIPS (Learned Perceptual Image Patch Similarity)
+- Temporal consistency metrics
 
 Usage:
-    python evaluate.py --generated <path> --ground-truth <path> --output <path>
+    python evaluate.py \
+        --baseline-dir lora_experiment/results/baseline \
+        --lora-dir lora_experiment/results/lora_r16_lr2e4_100steps \
+        --gt-dir lora_experiment/data/ucf101_processed \
+        --output-dir lora_experiment/results/evaluation
 """
 
 import argparse
@@ -22,25 +27,13 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-# Try to import metrics
-try:
-    from skimage.metrics import peak_signal_noise_ratio as psnr
-    from skimage.metrics import structural_similarity as ssim
-    SKIMAGE_AVAILABLE = True
-except ImportError:
-    SKIMAGE_AVAILABLE = False
-    print("Warning: skimage not available, some metrics will be skipped")
-
-try:
-    import lpips
-    LPIPS_AVAILABLE = True
-except ImportError:
-    LPIPS_AVAILABLE = False
-    print("Warning: lpips not available, LPIPS metric will be skipped")
+# Add project root to path
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def load_video_frames(video_path: str) -> np.ndarray:
-    """Load video and return frames as numpy array [T, H, W, C]."""
+def load_video(video_path: str, max_frames: int = None) -> np.ndarray:
+    """Load video as numpy array [T, H, W, C]."""
     import av
     
     container = av.open(video_path)
@@ -49,214 +42,300 @@ def load_video_frames(video_path: str) -> np.ndarray:
     for frame in container.decode(video=0):
         img = frame.to_ndarray(format='rgb24')
         frames.append(img)
+        if max_frames and len(frames) >= max_frames:
+            break
     
     container.close()
     
     return np.stack(frames, axis=0)
 
 
-def compute_psnr(generated: np.ndarray, ground_truth: np.ndarray) -> float:
-    """Compute average PSNR across frames."""
-    if not SKIMAGE_AVAILABLE:
-        return float('nan')
-    
-    psnr_values = []
-    for i in range(min(len(generated), len(ground_truth))):
-        val = psnr(ground_truth[i], generated[i], data_range=255)
-        psnr_values.append(val)
-    
-    return np.mean(psnr_values)
+def compute_psnr(pred: np.ndarray, gt: np.ndarray) -> float:
+    """Compute PSNR between two videos."""
+    mse = np.mean((pred.astype(float) - gt.astype(float)) ** 2)
+    if mse == 0:
+        return float('inf')
+    max_pixel = 255.0
+    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
+    return float(psnr)
 
 
-def compute_ssim(generated: np.ndarray, ground_truth: np.ndarray) -> float:
-    """Compute average SSIM across frames."""
-    if not SKIMAGE_AVAILABLE:
-        return float('nan')
+def compute_ssim(pred: np.ndarray, gt: np.ndarray) -> float:
+    """Compute average SSIM between two videos."""
+    from skimage.metrics import structural_similarity as ssim
     
     ssim_values = []
-    for i in range(min(len(generated), len(ground_truth))):
-        val = ssim(ground_truth[i], generated[i], multichannel=True, channel_axis=2, data_range=255)
-        ssim_values.append(val)
+    T = min(pred.shape[0], gt.shape[0])
     
-    return np.mean(ssim_values)
+    for t in range(T):
+        # Compute SSIM for each channel and average
+        ssim_val = ssim(pred[t], gt[t], channel_axis=2, data_range=255)
+        ssim_values.append(ssim_val)
+    
+    return float(np.mean(ssim_values))
 
 
-def compute_lpips(generated: np.ndarray, ground_truth: np.ndarray, lpips_model) -> float:
-    """Compute average LPIPS across frames."""
-    if not LPIPS_AVAILABLE or lpips_model is None:
-        return float('nan')
-    
-    device = next(lpips_model.parameters()).device
+def compute_lpips(pred: np.ndarray, gt: np.ndarray, lpips_model=None) -> float:
+    """Compute average LPIPS between two videos."""
+    if lpips_model is None:
+        try:
+            import lpips
+            lpips_model = lpips.LPIPS(net='alex')
+            lpips_model = lpips_model.cuda() if torch.cuda.is_available() else lpips_model
+        except ImportError:
+            print("LPIPS not available, skipping...")
+            return None
     
     lpips_values = []
-    for i in range(min(len(generated), len(ground_truth))):
-        # Convert to tensor and normalize to [-1, 1]
-        gen_tensor = torch.from_numpy(generated[i]).permute(2, 0, 1).float() / 127.5 - 1
-        gt_tensor = torch.from_numpy(ground_truth[i]).permute(2, 0, 1).float() / 127.5 - 1
+    T = min(pred.shape[0], gt.shape[0])
+    device = next(lpips_model.parameters()).device
+    
+    for t in range(T):
+        # Convert to tensor [1, C, H, W] in range [-1, 1]
+        pred_t = torch.from_numpy(pred[t]).permute(2, 0, 1).float() / 127.5 - 1.0
+        gt_t = torch.from_numpy(gt[t]).permute(2, 0, 1).float() / 127.5 - 1.0
         
-        gen_tensor = gen_tensor.unsqueeze(0).to(device)
-        gt_tensor = gt_tensor.unsqueeze(0).to(device)
+        pred_t = pred_t.unsqueeze(0).to(device)
+        gt_t = gt_t.unsqueeze(0).to(device)
         
         with torch.no_grad():
-            val = lpips_model(gen_tensor, gt_tensor).item()
-        
-        lpips_values.append(val)
+            lpips_val = lpips_model(pred_t, gt_t).item()
+        lpips_values.append(lpips_val)
     
-    return np.mean(lpips_values)
+    return float(np.mean(lpips_values))
 
 
-def evaluate_video(
-    generated_path: str,
-    ground_truth_path: str,
-    lpips_model=None,
-    conditioning_frames: int = 33,
-) -> dict:
-    """Evaluate a single video pair."""
+def compute_temporal_consistency(video: np.ndarray) -> float:
+    """Compute temporal consistency as average frame-to-frame PSNR."""
+    T = video.shape[0]
+    if T < 2:
+        return float('inf')
     
-    # Load videos
-    generated = load_video_frames(generated_path)
-    ground_truth = load_video_frames(ground_truth_path)
+    psnr_values = []
+    for t in range(1, T):
+        psnr = compute_psnr(video[t], video[t-1])
+        if psnr != float('inf'):
+            psnr_values.append(psnr)
     
-    # Only compare continuation frames (skip conditioning)
-    gen_continuation = generated[conditioning_frames:]
-    gt_continuation = ground_truth[conditioning_frames:]
-    
-    # Ensure same length
-    min_len = min(len(gen_continuation), len(gt_continuation))
-    gen_continuation = gen_continuation[:min_len]
-    gt_continuation = gt_continuation[:min_len]
-    
-    # Compute metrics
-    metrics = {
-        "psnr": compute_psnr(gen_continuation, gt_continuation),
-        "ssim": compute_ssim(gen_continuation, gt_continuation),
-        "lpips": compute_lpips(gen_continuation, gt_continuation, lpips_model),
-        "num_frames_compared": min_len,
-    }
-    
-    return metrics
+    return float(np.mean(psnr_values)) if psnr_values else float('inf')
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Evaluate video continuation quality")
-    
-    parser.add_argument("--generated-dir", type=str, required=True,
-                        help="Directory with generated videos")
-    parser.add_argument("--ground-truth-dir", type=str, required=True,
-                        help="Directory with ground truth videos")
-    parser.add_argument("--output", type=str, required=True,
-                        help="Output file for metrics (JSON)")
-    parser.add_argument("--conditioning-frames", type=int, default=33,
-                        help="Number of conditioning frames to skip")
-    parser.add_argument("--use-lpips", action="store_true",
-                        help="Compute LPIPS metric (requires GPU)")
-    
-    args = parser.parse_args()
+def run_evaluation(args):
+    """Run evaluation comparing baseline and LoRA results."""
     
     print("=" * 70)
-    print("Video Continuation Quality Evaluation")
-    print("=" * 70)
-    print(f"Generated videos: {args.generated_dir}")
-    print(f"Ground truth videos: {args.ground_truth_dir}")
-    print(f"Conditioning frames: {args.conditioning_frames}")
+    print("Evaluation for Open-Sora v2.0 TTA Experiments")
     print("=" * 70)
     
-    # Setup LPIPS model
+    # Setup output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Load metadata
+    gt_metadata = pd.read_csv(Path(args.gt_dir) / "metadata.csv")
+    
+    # Load baseline results if available
+    baseline_results = None
+    if args.baseline_dir:
+        baseline_results_path = Path(args.baseline_dir) / "results.json"
+        if baseline_results_path.exists():
+            with open(baseline_results_path) as f:
+                baseline_results = json.load(f)
+            print(f"Loaded {len(baseline_results)} baseline results")
+    
+    # Load LoRA results
+    lora_results = None
+    if args.lora_dir:
+        lora_results_path = Path(args.lora_dir) / "results.json"
+        if lora_results_path.exists():
+            with open(lora_results_path) as f:
+                lora_results = json.load(f)
+            print(f"Loaded {len(lora_results)} LoRA results")
+    
+    # Initialize LPIPS model
     lpips_model = None
-    if args.use_lpips and LPIPS_AVAILABLE:
-        print("Loading LPIPS model...")
+    try:
+        import lpips
         lpips_model = lpips.LPIPS(net='alex')
         if torch.cuda.is_available():
             lpips_model = lpips_model.cuda()
+    except ImportError:
+        print("Warning: LPIPS not available")
     
-    # Find video pairs
-    gen_dir = Path(args.generated_dir)
-    gt_dir = Path(args.ground_truth_dir)
-    
-    gen_videos = list(gen_dir.rglob("*.mp4"))
-    print(f"Found {len(gen_videos)} generated videos")
-    
-    # Evaluate each video
+    # Compute metrics
     all_metrics = []
     
-    for gen_path in tqdm(gen_videos, desc="Evaluating"):
-        # Find corresponding ground truth
-        rel_path = gen_path.relative_to(gen_dir)
-        gt_path = gt_dir / rel_path
+    # Determine which videos to evaluate
+    if lora_results:
+        video_list = [r for r in lora_results if r.get("success", False)]
+    elif baseline_results:
+        video_list = [r for r in baseline_results if r.get("success", False)]
+    else:
+        # Fall back to metadata
+        video_list = [{"video_name": Path(row['path']).stem, "input_path": row['path']} 
+                      for _, row in gt_metadata.iterrows()]
+    
+    if args.max_videos:
+        video_list = video_list[:args.max_videos]
+    
+    print(f"\nEvaluating {len(video_list)} videos...")
+    
+    # Evaluation params
+    cond_frames = 33  # v2v_head uses 33 conditioning frames
+    
+    for item in tqdm(video_list, desc="Evaluating"):
+        video_name = item["video_name"]
         
-        if not gt_path.exists():
-            print(f"Warning: Ground truth not found for {rel_path}")
+        # Find GT video
+        gt_row = gt_metadata[gt_metadata['path'].str.contains(video_name)]
+        if len(gt_row) == 0:
+            print(f"Warning: Ground truth not found for {video_name}")
             continue
+        gt_path = gt_row.iloc[0]['path']
+        
+        metrics = {"video_name": video_name}
         
         try:
-            metrics = evaluate_video(
-                str(gen_path),
-                str(gt_path),
-                lpips_model,
-                args.conditioning_frames,
-            )
-            metrics["video"] = str(rel_path)
+            # Load ground truth (generation frames: 34-65, i.e., indices 33-64)
+            gt_video = load_video(gt_path)
+            gt_gen_frames = gt_video[cond_frames:, :, :, :]  # Generation portion
+            
+            # Evaluate baseline
+            if baseline_results:
+                baseline_item = next((r for r in baseline_results 
+                                      if r.get("video_name") == video_name and r.get("success")), None)
+                if baseline_item:
+                    baseline_path = baseline_item["output_path"]
+                    if os.path.exists(baseline_path):
+                        baseline_video = load_video(baseline_path)
+                        # Compare generation portion (skip conditioning frames in output)
+                        baseline_gen = baseline_video[cond_frames:, :, :, :]
+                        
+                        # Ensure same length
+                        min_len = min(len(baseline_gen), len(gt_gen_frames))
+                        baseline_gen = baseline_gen[:min_len]
+                        gt_for_baseline = gt_gen_frames[:min_len]
+                        
+                        metrics["baseline_psnr"] = compute_psnr(baseline_gen, gt_for_baseline)
+                        metrics["baseline_ssim"] = compute_ssim(baseline_gen, gt_for_baseline)
+                        if lpips_model:
+                            metrics["baseline_lpips"] = compute_lpips(baseline_gen, gt_for_baseline, lpips_model)
+                        metrics["baseline_temporal"] = compute_temporal_consistency(baseline_gen)
+            
+            # Evaluate LoRA
+            if lora_results:
+                lora_item = next((r for r in lora_results 
+                                  if r.get("video_name") == video_name and r.get("success")), None)
+                if lora_item:
+                    lora_path = lora_item["output_path"]
+                    if os.path.exists(lora_path):
+                        lora_video = load_video(lora_path)
+                        # Compare generation portion
+                        lora_gen = lora_video[cond_frames:, :, :, :]
+                        
+                        min_len = min(len(lora_gen), len(gt_gen_frames))
+                        lora_gen = lora_gen[:min_len]
+                        gt_for_lora = gt_gen_frames[:min_len]
+                        
+                        metrics["lora_psnr"] = compute_psnr(lora_gen, gt_for_lora)
+                        metrics["lora_ssim"] = compute_ssim(lora_gen, gt_for_lora)
+                        if lpips_model:
+                            metrics["lora_lpips"] = compute_lpips(lora_gen, gt_for_lora, lpips_model)
+                        metrics["lora_temporal"] = compute_temporal_consistency(lora_gen)
+                        
+                        # Add training info
+                        metrics["train_time"] = lora_item.get("train_time")
+                        metrics["final_loss"] = lora_item.get("final_loss")
+            
+            # Compute improvement metrics
+            if "baseline_psnr" in metrics and "lora_psnr" in metrics:
+                metrics["psnr_improvement"] = metrics["lora_psnr"] - metrics["baseline_psnr"]
+            if "baseline_ssim" in metrics and "lora_ssim" in metrics:
+                metrics["ssim_improvement"] = metrics["lora_ssim"] - metrics["baseline_ssim"]
+            if "baseline_lpips" in metrics and "lora_lpips" in metrics:
+                # Lower LPIPS is better, so negative difference is improvement
+                metrics["lpips_improvement"] = metrics["baseline_lpips"] - metrics["lora_lpips"]
+            
             all_metrics.append(metrics)
+            
         except Exception as e:
-            print(f"Error evaluating {rel_path}: {e}")
+            print(f"Error evaluating {video_name}: {e}")
             continue
     
+    # Save detailed results
+    metrics_df = pd.DataFrame(all_metrics)
+    metrics_df.to_csv(output_dir / "detailed_metrics.csv", index=False)
+    
     # Compute summary statistics
-    if len(all_metrics) > 0:
-        df = pd.DataFrame(all_metrics)
-        
-        summary = {
-            "num_videos": len(all_metrics),
-            "psnr": {
-                "mean": df["psnr"].mean(),
-                "std": df["psnr"].std(),
-                "min": df["psnr"].min(),
-                "max": df["psnr"].max(),
-            },
-            "ssim": {
-                "mean": df["ssim"].mean(),
-                "std": df["ssim"].std(),
-                "min": df["ssim"].min(),
-                "max": df["ssim"].max(),
-            },
-        }
-        
-        if args.use_lpips:
-            summary["lpips"] = {
-                "mean": df["lpips"].mean(),
-                "std": df["lpips"].std(),
-                "min": df["lpips"].min(),
-                "max": df["lpips"].max(),
-            }
-        
-        # Save results
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(output_path, "w") as f:
-            json.dump(summary, f, indent=2)
-        
-        # Also save per-video metrics
-        per_video_path = output_path.with_suffix(".csv")
-        df.to_csv(per_video_path, index=False)
-        
-        print()
-        print("=" * 70)
-        print("Evaluation Summary")
-        print("=" * 70)
-        print(f"Videos evaluated: {len(all_metrics)}")
-        print(f"PSNR: {summary['psnr']['mean']:.2f} ± {summary['psnr']['std']:.2f}")
-        print(f"SSIM: {summary['ssim']['mean']:.4f} ± {summary['ssim']['std']:.4f}")
-        if args.use_lpips:
-            print(f"LPIPS: {summary['lpips']['mean']:.4f} ± {summary['lpips']['std']:.4f}")
-        print()
-        print(f"Results saved to: {output_path}")
-        print(f"Per-video metrics: {per_video_path}")
-        print("=" * 70)
-    else:
-        print("No videos were evaluated successfully.")
+    summary = {}
+    
+    for col in metrics_df.columns:
+        if col == "video_name":
+            continue
+        if metrics_df[col].dtype in [np.float64, np.int64]:
+            valid = metrics_df[col].dropna()
+            if len(valid) > 0:
+                summary[f"{col}_mean"] = float(valid.mean())
+                summary[f"{col}_std"] = float(valid.std())
+                summary[f"{col}_median"] = float(valid.median())
+    
+    summary["num_videos_evaluated"] = len(all_metrics)
+    
+    with open(output_dir / "summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+    
+    # Print summary
+    print("\n" + "=" * 70)
+    print("Evaluation Summary")
+    print("=" * 70)
+    print(f"Videos evaluated: {len(all_metrics)}")
+    
+    if "baseline_psnr_mean" in summary:
+        print(f"\nBaseline metrics:")
+        print(f"  PSNR: {summary.get('baseline_psnr_mean', 'N/A'):.2f} ± {summary.get('baseline_psnr_std', 0):.2f}")
+        print(f"  SSIM: {summary.get('baseline_ssim_mean', 'N/A'):.4f} ± {summary.get('baseline_ssim_std', 0):.4f}")
+        if "baseline_lpips_mean" in summary:
+            print(f"  LPIPS: {summary.get('baseline_lpips_mean', 'N/A'):.4f} ± {summary.get('baseline_lpips_std', 0):.4f}")
+    
+    if "lora_psnr_mean" in summary:
+        print(f"\nLoRA TTA metrics:")
+        print(f"  PSNR: {summary.get('lora_psnr_mean', 'N/A'):.2f} ± {summary.get('lora_psnr_std', 0):.2f}")
+        print(f"  SSIM: {summary.get('lora_ssim_mean', 'N/A'):.4f} ± {summary.get('lora_ssim_std', 0):.4f}")
+        if "lora_lpips_mean" in summary:
+            print(f"  LPIPS: {summary.get('lora_lpips_mean', 'N/A'):.4f} ± {summary.get('lora_lpips_std', 0):.4f}")
+    
+    if "psnr_improvement_mean" in summary:
+        print(f"\nImprovement (LoRA - Baseline):")
+        print(f"  PSNR: {summary.get('psnr_improvement_mean', 'N/A'):+.2f}")
+        print(f"  SSIM: {summary.get('ssim_improvement_mean', 'N/A'):+.4f}")
+        if "lpips_improvement_mean" in summary:
+            print(f"  LPIPS: {summary.get('lpips_improvement_mean', 'N/A'):+.4f} (positive = better)")
+    
+    print(f"\nResults saved to: {output_dir}")
+    print("=" * 70)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate TTA results")
+    
+    parser.add_argument("--baseline-dir", type=str, default=None,
+                        help="Directory with baseline results")
+    parser.add_argument("--lora-dir", type=str, default=None,
+                        help="Directory with LoRA TTA results")
+    parser.add_argument("--gt-dir", type=str, required=True,
+                        help="Directory with ground truth videos and metadata.csv")
+    parser.add_argument("--output-dir", type=str, required=True,
+                        help="Output directory for evaluation results")
+    parser.add_argument("--max-videos", type=int, default=None,
+                        help="Maximum number of videos to evaluate")
+    
+    args = parser.parse_args()
+    
+    if not args.baseline_dir and not args.lora_dir:
+        raise ValueError("At least one of --baseline-dir or --lora-dir must be provided")
+    
+    run_evaluation(args)
 
 
 if __name__ == "__main__":
     main()
-
