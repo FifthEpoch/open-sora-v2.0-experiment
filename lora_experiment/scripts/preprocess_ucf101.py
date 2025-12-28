@@ -175,27 +175,23 @@ def read_video(video_path):
 
 
 def write_video(frames, output_path, fps=24):
-    """Write frames to video file."""
+    """Write frames to video file using imageio (more reliable than PyAV for encoding)."""
+    import imageio
+    
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    height, width = frames[0].shape[:2]
+    # Convert list to numpy array if needed
+    if isinstance(frames, list):
+        frames = np.stack(frames, axis=0)
     
-    container = av.open(str(output_path), mode='w')
-    stream = container.add_stream('libx264', rate=fps)
-    stream.width = width
-    stream.height = height
-    stream.pix_fmt = 'yuv420p'
-    stream.options = {'crf': '18'}
-    
-    for frame in frames:
-        av_frame = av.VideoFrame.from_ndarray(frame, format='rgb24')
-        for packet in stream.encode(av_frame):
-            container.mux(packet)
-    
-    for packet in stream.encode():
-        container.mux(packet)
-    
-    container.close()
+    # Use imageio with ffmpeg backend for reliable encoding
+    imageio.mimwrite(
+        str(output_path), 
+        frames, 
+        fps=fps, 
+        codec='libx264',
+        output_params=['-crf', '18', '-pix_fmt', 'yuv420p']
+    )
 
 
 def parse_ucf101_filename(filename):
@@ -215,16 +211,22 @@ def parse_ucf101_filename(filename):
 
 
 def process_video(video_path, output_base, target_fps=24, target_frames=65, 
-                  target_height=256, target_width=455):
+                  target_height=256, target_width=455, verbose=False):
     """
     Process a single video for v2.0 TTA experiments.
     
-    Returns: (success, output_path, num_frames, caption) or (False, None, None, None)
+    Returns: (success, output_path, num_frames, caption, skip_reason) or (False, None, None, None, reason)
     """
     try:
         frames, fps = read_video(video_path)
-        if frames is None or len(frames) == 0:
-            return False, None, None, None
+        if frames is None:
+            return False, None, None, None, "read_failed"
+        if len(frames) == 0:
+            return False, None, None, None, "no_frames"
+        
+        original_frame_count = len(frames)
+        if verbose:
+            print(f"  Read {original_frame_count} frames at {fps:.1f} fps from {video_path.name}")
         
         # Center crop and resize each frame
         processed_frames = []
@@ -238,19 +240,22 @@ def process_video(video_path, output_base, target_fps=24, target_frames=65,
                 continue
         
         if len(processed_frames) == 0:
-            return False, None, None, None
+            return False, None, None, None, "processing_failed"
         
         # Resample to target fps
         resampled_frames = resample_video(processed_frames, fps, target_fps)
         
+        if verbose:
+            print(f"  After resampling to {target_fps}fps: {len(resampled_frames)} frames")
+        
         # Check if we have enough frames
         if len(resampled_frames) < target_frames:
-            return False, None, None, None
+            return False, None, None, None, f"too_short:{len(resampled_frames)}"
         
         # Uniformly sample to target frames
         sampled_frames = uniform_sample_frames(resampled_frames, target_frames)
         if sampled_frames is None:
-            return False, None, None, None
+            return False, None, None, None, "sampling_failed"
         
         # Determine output path
         relative_path = video_path.relative_to(video_path.parents[1])
@@ -267,11 +272,11 @@ def process_video(video_path, output_base, target_fps=24, target_frames=65,
         caption = ''.join([' ' + c.lower() if c.isupper() else c for c in class_name]).strip()
         caption = caption.replace('_', ' ')
         
-        return True, output_path, target_frames, caption
+        return True, output_path, target_frames, caption, None
     
     except Exception as e:
         print(f"  Error processing {video_path.name}: {e}")
-        return False, None, None, None
+        return False, None, None, None, f"exception:{e}"
 
 
 def main():
@@ -296,6 +301,8 @@ def main():
                         help="Number of conditioning frames (for v2v_head mode)")
     parser.add_argument("--max-videos", type=int, default=None,
                         help="Maximum number of videos to process (for testing)")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Enable verbose output for all videos")
     
     args = parser.parse_args()
     
@@ -337,17 +344,22 @@ def main():
         video_files = video_files[:args.max_videos]
         print(f"Processing first {args.max_videos} videos only")
     
+    # Enable verbose mode for first few videos to debug (or all if --verbose)
+    verbose_count = len(video_files) if args.verbose else 5
+    
     # Process videos
     output_dir.mkdir(parents=True, exist_ok=True)
     
     metadata = []
     successful = 0
-    skipped = 0
+    skip_reasons = {}
     
-    for video_path in tqdm(video_files, desc="Processing videos"):
-        success, output_path, num_frames, caption = process_video(
+    for idx, video_path in enumerate(tqdm(video_files, desc="Processing videos")):
+        verbose = idx < verbose_count
+        
+        success, output_path, num_frames, caption, skip_reason = process_video(
             video_path, output_dir, args.fps, args.frames, 
-            target_height, target_width
+            target_height, target_width, verbose=verbose
         )
         
         if success:
@@ -367,26 +379,38 @@ def main():
             })
             successful += 1
         else:
-            skipped += 1
+            # Track skip reasons
+            reason_key = skip_reason.split(':')[0] if skip_reason else "unknown"
+            skip_reasons[reason_key] = skip_reasons.get(reason_key, 0) + 1
     
     # Save metadata
     csv_path = output_dir / "metadata.csv"
     df = pd.DataFrame(metadata)
     df.to_csv(csv_path, index=False)
     
+    total_skipped = sum(skip_reasons.values())
+    
     print("\n" + "=" * 70)
     print("✓ Preprocessing complete!")
     print("=" * 70)
     print(f"Successful: {successful} videos")
-    print(f"Skipped: {skipped} videos (too short for {args.frames} frames)")
+    print(f"Skipped: {total_skipped} videos")
+    if skip_reasons:
+        print("  Skip breakdown:")
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            print(f"    - {reason}: {count}")
     print(f"Output directory: {output_dir}")
     print(f"Metadata CSV: {csv_path}")
     print()
-    print("Next steps:")
-    print("  1. Run baseline generation: sbatch scripts/generate_baseline.sbatch")
-    print("  2. Run LoRA TTA: sbatch scripts/run_lora_tta.sbatch")
-    print()
-    print("✓ Ready for TTA experiments!")
+    if successful > 0:
+        print("Next steps:")
+        print("  1. Run baseline generation: sbatch scripts/generate_baseline.sbatch")
+        print("  2. Run LoRA TTA: sbatch scripts/run_lora_tta.sbatch")
+        print()
+        print("✓ Ready for TTA experiments!")
+    else:
+        print("⚠️  No videos were processed successfully!")
+        print("Check the error messages above for details.")
 
 
 if __name__ == "__main__":
