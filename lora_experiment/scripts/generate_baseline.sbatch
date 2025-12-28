@@ -27,14 +27,24 @@ echo "==========================================================================
 # Environment Setup
 # ==============================================================================
 
-# Source the scratch environment setup
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${SCRIPT_DIR}/../.."
+# IMPORTANT: Use absolute path - SLURM copies scripts to temp location
+PROJECT_ROOT="/scratch/wc3013/open-sora-v2.0-experiment"
 
+# Verify project root exists
+if [ ! -d "${PROJECT_ROOT}" ]; then
+    echo "ERROR: Project root not found at ${PROJECT_ROOT}"
+    echo "Please update PROJECT_ROOT in this script to your actual project location"
+    exit 1
+fi
+
+# Source the scratch environment setup
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
 
 # Load modules
 module load anaconda3/2025.06
+
+# Initialize conda for this shell
+eval "$(conda shell.bash hook)"
 
 # Activate conda environment
 conda activate opensora20
@@ -47,8 +57,9 @@ echo "Python: $(which python) - $(python --version)"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # Reinstall opensora in editable mode
+cd "${PROJECT_ROOT}"
 pip uninstall opensora -y 2>/dev/null || true
-pip install -e "${PROJECT_ROOT}" --quiet
+pip install -e . --quiet
 
 # Create logs directory
 mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
@@ -72,6 +83,7 @@ SEED="${BASELINE_SEED:-42}"
 
 echo ""
 echo "Configuration:"
+echo "  Project root: ${PROJECT_ROOT}"
 echo "  Data directory: ${DATA_DIR}"
 echo "  Output directory: ${OUTPUT_DIR}"
 echo "  Diffusion steps: ${NUM_STEPS}"
