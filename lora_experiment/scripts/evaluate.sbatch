@@ -1,11 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=eval_tta
-#SBATCH --output=lora_experiment/logs/eval_%j.out
-#SBATCH --error=lora_experiment/logs/eval_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
 #SBATCH --time=4:00:00
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:h200:1
+#SBATCH --output=lora_experiment/logs/eval_%j.out
+#SBATCH --error=lora_experiment/logs/eval_%j.err
 
 # ==============================================================================
 # Evaluate TTA Results for Open-Sora v2.0

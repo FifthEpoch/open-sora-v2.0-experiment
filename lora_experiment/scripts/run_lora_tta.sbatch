@@ -1,11 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=lora_tta
-#SBATCH --output=lora_experiment/logs/lora_tta_%j.out
-#SBATCH --error=lora_experiment/logs/lora_tta_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
 #SBATCH --time=48:00:00
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:h200:1
+#SBATCH --output=lora_experiment/logs/lora_tta_%j.out
+#SBATCH --error=lora_experiment/logs/lora_tta_%j.err
 
 # ==============================================================================
 # LoRA Test-Time Adaptation for Open-Sora v2.0

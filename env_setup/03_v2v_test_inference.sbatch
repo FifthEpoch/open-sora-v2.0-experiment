@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=test_v2v_opensora20
-#SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128GB
 #SBATCH --time=01:00:00
+#SBATCH --gres=gpu:h200:1
 #SBATCH --output=slurm_log/test_v2v_%j.out
 #SBATCH --error=slurm_log/test_v2v_%j.err
 
