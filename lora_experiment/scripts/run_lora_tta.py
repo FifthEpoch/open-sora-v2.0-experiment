@@ -255,6 +255,13 @@ def finetune_lora_on_conditioning(
     # The model outputs in packed format, so we compare in packed format
     latents_packed = pack(latents, patch_size=patch_size)
     
+    # Pre-compute conditioning input for the model
+    # cond = concat(masks, latent) where masks indicate conditioning frames
+    # For TTA on conditioning frames, all frames are "conditioning" so mask is all 1s
+    masks = torch.ones(B, 1, T, H, W, device=device, dtype=dtype)
+    cond = torch.cat((masks, latents), dim=1)  # [B, C+1, T, H, W]
+    cond_packed = pack(cond, patch_size=patch_size)
+    
     losses = []
     train_start = time.time()
     
@@ -292,6 +299,7 @@ def finetune_lora_on_conditioning(
             txt_ids=txt_ids,
             timesteps=t.to(dtype),
             y_vec=text_embeds["vec"],
+            cond=cond_packed,
             guidance=guidance_vec,
         )
         
