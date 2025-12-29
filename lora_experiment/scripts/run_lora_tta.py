@@ -266,7 +266,7 @@ def finetune_lora_on_conditioning(
     train_start = time.time()
     
     for step in range(num_steps):
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)  # More memory efficient
         
         # Learning rate warmup
         if step < warmup_steps:
@@ -277,14 +277,12 @@ def finetune_lora_on_conditioning(
         # Sample random timestep using flow matching: t ~ U(0, 1)
         t = torch.rand(B, device=device, dtype=dtype)
         
-        # Sample noise in latent space
+        # Sample noise in latent space (reuse noise tensor each step)
         noise = torch.randn_like(latents)
         noise_packed = pack(noise, patch_size=patch_size)
         
         # Flow matching interpolation (following Open-Sora v2.0 convention)
-        # x_t = (1 - t) * x_0 + (1 - (1 - sigma_min) * (1-t)) * x_1
-        # Simplifies to: x_t = t * x_0 + (1 - (1 - sigma_min) * t) * noise
-        t_rev = 1 - t  # Reverse time for Open-Sora convention
+        t_rev = 1 - t
         t_expand = t_rev[:, None, None]
         z_t_packed = t_expand * latents_packed + (1 - (1 - sigma_min) * t_expand) * noise_packed
         
@@ -306,6 +304,9 @@ def finetune_lora_on_conditioning(
         # Compute MSE loss in packed format
         loss = F.mse_loss(v_pred.float(), v_target.float())
         
+        # Store loss value before backward (detached)
+        loss_value = loss.item()
+        
         # Backward pass
         loss.backward()
         
@@ -315,10 +316,22 @@ def finetune_lora_on_conditioning(
         # Optimizer step
         optimizer.step()
         
-        losses.append(loss.item())
+        # Store loss
+        losses.append(loss_value)
+        
+        # Explicit memory cleanup every step
+        del loss, v_pred, z_t_packed, v_target, noise, noise_packed, t, t_rev, t_expand
+        
+        # Periodic cache clearing
+        if step % 10 == 0:
+            torch.cuda.empty_cache()
     
     train_time = time.time() - train_start
     model.eval()
+    
+    # Final cleanup
+    del latents_packed, cond_packed, masks, cond, img_ids, txt_ids, guidance_vec
+    torch.cuda.empty_cache()
     
     return losses, train_time
 
@@ -551,6 +564,9 @@ def run_tta_experiment(args):
             results.append(result)
             success_count += 1
             
+            # Cleanup after successful processing
+            del latents, text_embeds, txt_embed, vec_embed, output, losses
+            
         except Exception as e:
             import traceback
             print(f"\nError processing {video_name}: {e}")
@@ -573,9 +589,10 @@ def run_tta_experiment(args):
             with open(checkpoint_path, "w") as f:
                 json.dump(checkpoint, f, indent=2)
         
-        # Clear GPU memory
-        torch.cuda.empty_cache()
+        # Aggressive memory cleanup after each video
         gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()  # Ensure all CUDA operations complete
     
     # Save final results
     with open(output_dir / "results.json", "w") as f:

@@ -74,8 +74,8 @@ DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
 LORA_RANK="${LORA_RANK:-16}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
 LEARNING_RATE="${LEARNING_RATE:-2e-4}"
-NUM_STEPS="${NUM_STEPS:-100}"
-WARMUP_STEPS="${WARMUP_STEPS:-5}"
+NUM_STEPS="${NUM_STEPS:-20}"  # Reduced from 100 to prevent OOM
+WARMUP_STEPS="${WARMUP_STEPS:-3}"
 TARGET_MLP="${TARGET_MLP:-false}"
 
 # Inference parameters
