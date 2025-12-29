@@ -56,15 +56,19 @@ class LoRALinear(nn.Module):
         self.alpha = alpha
         self.scaling = alpha / rank
         
+        # Get device and dtype from original layer
+        device = original_layer.weight.device
+        dtype = original_layer.weight.dtype
+        
         # Freeze the original layer
         for param in self.original_layer.parameters():
             param.requires_grad = False
         
-        # Create LoRA matrices
+        # Create LoRA matrices ON THE SAME DEVICE as the original layer
         # A: down projection (in_features -> rank)
         # B: up projection (rank -> out_features)
-        self.lora_A = nn.Parameter(torch.zeros(rank, self.in_features))
-        self.lora_B = nn.Parameter(torch.zeros(self.out_features, rank))
+        self.lora_A = nn.Parameter(torch.zeros(rank, self.in_features, device=device, dtype=dtype))
+        self.lora_B = nn.Parameter(torch.zeros(self.out_features, rank, device=device, dtype=dtype))
         
         # Optional dropout
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -150,19 +154,23 @@ class LoRAFusedQKV(nn.Module):
         self.scaling = alpha / rank
         self.enable_lora = enable_lora
         
+        # Get device and dtype from original layer
+        device = original_qkv.weight.device
+        dtype = original_qkv.weight.dtype
+        
         # Freeze the original layer
         for param in self.original_qkv.parameters():
             param.requires_grad = False
         
-        # Create LoRA matrices for Q, K, V separately
-        self.lora_A_q = nn.Parameter(torch.zeros(rank, self.in_features)) if enable_lora[0] else None
-        self.lora_B_q = nn.Parameter(torch.zeros(self.hidden_size, rank)) if enable_lora[0] else None
+        # Create LoRA matrices for Q, K, V separately ON THE SAME DEVICE
+        self.lora_A_q = nn.Parameter(torch.zeros(rank, self.in_features, device=device, dtype=dtype)) if enable_lora[0] else None
+        self.lora_B_q = nn.Parameter(torch.zeros(self.hidden_size, rank, device=device, dtype=dtype)) if enable_lora[0] else None
         
-        self.lora_A_k = nn.Parameter(torch.zeros(rank, self.in_features)) if enable_lora[1] else None
-        self.lora_B_k = nn.Parameter(torch.zeros(self.hidden_size, rank)) if enable_lora[1] else None
+        self.lora_A_k = nn.Parameter(torch.zeros(rank, self.in_features, device=device, dtype=dtype)) if enable_lora[1] else None
+        self.lora_B_k = nn.Parameter(torch.zeros(self.hidden_size, rank, device=device, dtype=dtype)) if enable_lora[1] else None
         
-        self.lora_A_v = nn.Parameter(torch.zeros(rank, self.in_features)) if enable_lora[2] else None
-        self.lora_B_v = nn.Parameter(torch.zeros(self.hidden_size, rank)) if enable_lora[2] else None
+        self.lora_A_v = nn.Parameter(torch.zeros(rank, self.in_features, device=device, dtype=dtype)) if enable_lora[2] else None
+        self.lora_B_v = nn.Parameter(torch.zeros(self.hidden_size, rank, device=device, dtype=dtype)) if enable_lora[2] else None
         
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         

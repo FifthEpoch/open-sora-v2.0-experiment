@@ -88,6 +88,7 @@ MAX_VIDEOS="${MAX_VIDEOS:-100}"  # Default to 100 videos for TTA experiments
 STRATIFIED="${STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
+RESTART="${LORA_RESTART:-true}"  # Default to restart (fresh start)
 
 # Construct output directory name
 OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/lora_r${LORA_RANK}_lr${LEARNING_RATE}_${NUM_STEPS}steps"
@@ -110,6 +111,7 @@ echo "  Guidance: ${GUIDANCE}"
 echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
 echo "  Stratified sampling: ${STRATIFIED}"
+echo "  Restart (fresh start): ${RESTART}"
 echo "  Seed: ${SEED}"
 echo "  Save LoRA weights: ${SAVE_LORA_WEIGHTS}"
 echo ""
@@ -145,6 +147,10 @@ fi
 
 if [ "${STRATIFIED}" = "true" ]; then
     CMD="${CMD} --stratified"
+fi
+
+if [ "${RESTART}" = "true" ]; then
+    CMD="${CMD} --restart"
 fi
 
 echo "Running: ${CMD}"
