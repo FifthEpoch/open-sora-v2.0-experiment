@@ -62,6 +62,51 @@ from lora_layers import (
 )
 
 
+def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.DataFrame:
+    """
+    Stratified sampling: select n_samples proportionally from each class.
+    
+    Args:
+        df: DataFrame with 'class' column
+        n_samples: Total number of samples to select
+        seed: Random seed for reproducibility
+    
+    Returns:
+        Sampled DataFrame with stratified selection
+    """
+    np.random.seed(seed)
+    
+    classes = df['class'].unique()
+    n_classes = len(classes)
+    
+    # Calculate samples per class (at least 1 per class if possible)
+    base_per_class = max(1, n_samples // n_classes)
+    remainder = n_samples - (base_per_class * n_classes)
+    
+    sampled_dfs = []
+    for i, cls in enumerate(sorted(classes)):
+        class_df = df[df['class'] == cls]
+        # Add 1 extra sample to first 'remainder' classes
+        n_for_class = base_per_class + (1 if i < remainder else 0)
+        n_for_class = min(n_for_class, len(class_df))  # Don't exceed available
+        
+        if n_for_class > 0:
+            sampled = class_df.sample(n=n_for_class, random_state=seed)
+            sampled_dfs.append(sampled)
+    
+    result = pd.concat(sampled_dfs, ignore_index=True)
+    
+    # If we still need more samples (some classes had fewer than needed)
+    if len(result) < n_samples:
+        remaining = df[~df.index.isin(result.index)]
+        extra_needed = n_samples - len(result)
+        if len(remaining) >= extra_needed:
+            extra = remaining.sample(n=extra_needed, random_state=seed)
+            result = pd.concat([result, extra], ignore_index=True)
+    
+    return result.head(n_samples)  # Ensure exact count
+
+
 def save_video(video_tensor: torch.Tensor, output_path: str, fps: int = 24):
     """Save video tensor to file."""
     import imageio
@@ -297,8 +342,13 @@ def run_tta_experiment(args):
     print(f"Found {len(df)} videos in dataset")
     
     if args.max_videos:
-        df = df.head(args.max_videos)
-        print(f"Processing first {args.max_videos} videos")
+        if args.stratified and 'class' in df.columns:
+            # Stratified sampling: select proportionally from each class
+            df = stratified_sample(df, args.max_videos, seed=args.seed)
+            print(f"Stratified sample: {args.max_videos} videos from {df['class'].nunique()} classes")
+        else:
+            df = df.head(args.max_videos)
+            print(f"Processing first {args.max_videos} videos")
     
     # Setup output directory
     output_dir = Path(args.output_dir)
@@ -615,6 +665,8 @@ def main():
                         help="Random seed")
     parser.add_argument("--max-videos", type=int, default=None,
                         help="Maximum number of videos to process")
+    parser.add_argument("--stratified", action="store_true",
+                        help="Use stratified sampling across classes (requires 'class' column in metadata)")
     parser.add_argument("--restart", action="store_true",
                         help="Restart from beginning (ignore checkpoint)")
     parser.add_argument("--save-lora-weights", action="store_true",

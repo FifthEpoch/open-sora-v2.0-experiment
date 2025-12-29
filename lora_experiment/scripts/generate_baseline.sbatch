@@ -79,6 +79,7 @@ NUM_STEPS="${BASELINE_NUM_STEPS:-25}"
 GUIDANCE="${BASELINE_GUIDANCE:-7.5}"
 GUIDANCE_IMG="${BASELINE_GUIDANCE_IMG:-3.0}"
 MAX_VIDEOS="${BASELINE_MAX_VIDEOS:-100}"  # Default to 100 videos for TTA experiments
+STRATIFIED="${BASELINE_STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${BASELINE_SEED:-42}"
 
 echo ""
@@ -90,6 +91,7 @@ echo "  Diffusion steps: ${NUM_STEPS}"
 echo "  Guidance: ${GUIDANCE}"
 echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
+echo "  Stratified sampling: ${STRATIFIED}"
 echo "  Seed: ${SEED}"
 echo ""
 
@@ -107,6 +109,10 @@ CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/generate_baseline.py \
 
 if [ -n "${MAX_VIDEOS}" ]; then
     CMD="${CMD} --max-videos ${MAX_VIDEOS}"
+fi
+
+if [ "${STRATIFIED}" = "true" ]; then
+    CMD="${CMD} --stratified"
 fi
 
 echo "Running: ${CMD}"

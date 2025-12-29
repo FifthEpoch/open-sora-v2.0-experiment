@@ -85,6 +85,7 @@ GUIDANCE_IMG="${GUIDANCE_IMG:-3.0}"
 
 # Other parameters
 MAX_VIDEOS="${MAX_VIDEOS:-100}"  # Default to 100 videos for TTA experiments
+STRATIFIED="${STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
 
@@ -108,6 +109,7 @@ echo "  Inference steps: ${INFERENCE_STEPS}"
 echo "  Guidance: ${GUIDANCE}"
 echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
+echo "  Stratified sampling: ${STRATIFIED}"
 echo "  Seed: ${SEED}"
 echo "  Save LoRA weights: ${SAVE_LORA_WEIGHTS}"
 echo ""
@@ -139,6 +141,10 @@ fi
 
 if [ -n "${MAX_VIDEOS}" ]; then
     CMD="${CMD} --max-videos ${MAX_VIDEOS}"
+fi
+
+if [ "${STRATIFIED}" = "true" ]; then
+    CMD="${CMD} --stratified"
 fi
 
 echo "Running: ${CMD}"
