@@ -74,12 +74,29 @@ class LoRALinear(nn.Module):
     
     def reset_lora_parameters(self):
         """Initialize LoRA weights using Kaiming uniform for A and zeros for B."""
-        nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
-        nn.init.zeros_(self.lora_B)
+        # Store device and dtype to preserve them
+        device = self.lora_A.device
+        dtype = self.lora_A.dtype
+        
+        # Initialize in-place while preserving device/dtype
+        with torch.no_grad():
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            nn.init.zeros_(self.lora_B)
+            
+            # Ensure parameters stay on correct device (safety check)
+            if self.lora_A.device != device:
+                self.lora_A.data = self.lora_A.data.to(device, dtype)
+            if self.lora_B.device != device:
+                self.lora_B.data = self.lora_B.data.to(device, dtype)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Original forward pass (frozen)
         result = self.original_layer(x)
+        
+        # Ensure LoRA weights are on the same device as input
+        if self.lora_A.device != x.device:
+            self.lora_A.data = self.lora_A.data.to(x.device, x.dtype)
+            self.lora_B.data = self.lora_B.data.to(x.device, x.dtype)
         
         # LoRA forward pass
         # x @ A^T @ B^T * scaling
@@ -153,14 +170,34 @@ class LoRAFusedQKV(nn.Module):
     
     def reset_lora_parameters(self):
         """Initialize LoRA weights."""
+        with torch.no_grad():
+            for A, B in [(self.lora_A_q, self.lora_B_q), 
+                         (self.lora_A_k, self.lora_B_k),
+                         (self.lora_A_v, self.lora_B_v)]:
+                if A is not None:
+                    device = A.device
+                    dtype = A.dtype
+                    nn.init.kaiming_uniform_(A, a=math.sqrt(5))
+                    nn.init.zeros_(B)
+                    # Ensure parameters stay on correct device (safety check)
+                    if A.device != device:
+                        A.data = A.data.to(device, dtype)
+                    if B.device != device:
+                        B.data = B.data.to(device, dtype)
+    
+    def _ensure_device(self, x: torch.Tensor):
+        """Ensure all LoRA weights are on the same device as input."""
         for A, B in [(self.lora_A_q, self.lora_B_q), 
                      (self.lora_A_k, self.lora_B_k),
                      (self.lora_A_v, self.lora_B_v)]:
-            if A is not None:
-                nn.init.kaiming_uniform_(A, a=math.sqrt(5))
-                nn.init.zeros_(B)
+            if A is not None and A.device != x.device:
+                A.data = A.data.to(x.device, x.dtype)
+                B.data = B.data.to(x.device, x.dtype)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Ensure LoRA weights are on the same device as input
+        self._ensure_device(x)
+        
         # Original QKV projection
         qkv = self.original_qkv(x)
         
@@ -424,10 +461,35 @@ def load_lora_weights(model: nn.Module, path: str, strict: bool = True):
     model.load_state_dict(model_state)
 
 
-def reset_lora_weights(model: nn.Module):
-    """Reset all LoRA weights to initial values."""
+def reset_lora_weights(model: nn.Module, device: torch.device = None):
+    """
+    Reset all LoRA weights to initial values.
+    
+    Args:
+        model: The model containing LoRA modules
+        device: Device to move LoRA weights to (if None, inferred from model)
+    """
+    # Infer device from model if not specified
+    if device is None:
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     for module in model.modules():
-        if isinstance(module, (LoRALinear, LoRAFusedQKV)):
+        if isinstance(module, LoRALinear):
+            # Move to device before reset to ensure proper initialization
+            module.lora_A.data = module.lora_A.data.to(device)
+            module.lora_B.data = module.lora_B.data.to(device)
+            module.reset_lora_parameters()
+        elif isinstance(module, LoRAFusedQKV):
+            # Move to device before reset
+            for A, B in [(module.lora_A_q, module.lora_B_q), 
+                         (module.lora_A_k, module.lora_B_k),
+                         (module.lora_A_v, module.lora_B_v)]:
+                if A is not None:
+                    A.data = A.data.to(device)
+                    B.data = B.data.to(device)
             module.reset_lora_parameters()
 
 

@@ -478,8 +478,8 @@ def run_tta_experiment(args):
         video_name = Path(video_path).stem
         
         try:
-            # Reset LoRA weights before each video
-            reset_lora_weights(model)
+            # Reset LoRA weights before each video (explicitly pass device)
+            reset_lora_weights(model, device=device)
             
             # Load and encode conditioning frames
             latents, _ = load_video_for_training(
