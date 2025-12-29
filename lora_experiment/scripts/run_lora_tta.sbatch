@@ -84,7 +84,7 @@ GUIDANCE="${GUIDANCE:-7.5}"
 GUIDANCE_IMG="${GUIDANCE_IMG:-3.0}"
 
 # Other parameters
-MAX_VIDEOS="${MAX_VIDEOS:-}"
+MAX_VIDEOS="${MAX_VIDEOS:-100}"  # Default to 100 videos for TTA experiments
 SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
 
