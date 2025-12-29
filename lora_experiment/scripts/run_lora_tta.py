@@ -205,6 +205,9 @@ def finetune_lora_on_conditioning(
     Returns:
         Tuple of (loss_history, training_time)
     """
+    from einops import rearrange, repeat
+    from opensora.utils.sampling import pack
+    
     model.train()
     
     # Training config
@@ -212,6 +215,8 @@ def finetune_lora_on_conditioning(
     num_steps = config.get("num_steps", 100)
     warmup_steps = config.get("warmup_steps", 5)
     max_grad_norm = config.get("max_grad_norm", 1.0)
+    sigma_min = 1e-5
+    patch_size = 2
     
     # Get LoRA parameters only
     lora_params = get_lora_parameters(model)
@@ -227,8 +232,28 @@ def finetune_lora_on_conditioning(
         eps=1e-8,
     )
     
-    # Get latent shape
+    # Get latent shape: [B, C, T, H, W]
     B, C, T, H, W = latents.shape
+    
+    # Pre-compute img_ids (positional embeddings for image patches)
+    # img_ids shape: [T, H//patch, W//patch, 3] -> [B, T*H*W/patch^2, 3]
+    h_patches = H // patch_size
+    w_patches = W // patch_size
+    img_ids = torch.zeros(T, h_patches, w_patches, 3, device=device, dtype=dtype)
+    img_ids[..., 0] = img_ids[..., 0] + torch.arange(T, device=device)[:, None, None]
+    img_ids[..., 1] = img_ids[..., 1] + torch.arange(h_patches, device=device)[None, :, None]
+    img_ids[..., 2] = img_ids[..., 2] + torch.arange(w_patches, device=device)[None, None, :]
+    img_ids = repeat(img_ids, "t h w c -> b (t h w) c", b=B)
+    
+    # Pre-compute txt_ids (all zeros for text positional embeddings)
+    txt_ids = torch.zeros(B, text_embeds["txt"].shape[1], 3, device=device, dtype=dtype)
+    
+    # Pre-compute guidance vector (no guidance during training, set to 1.0)
+    guidance_vec = torch.ones(B, device=device, dtype=dtype)
+    
+    # Pack the target latents once (for computing target velocity)
+    # The model outputs in packed format, so we compare in packed format
+    latents_packed = pack(latents, patch_size=patch_size)
     
     losses = []
     train_start = time.time()
@@ -242,76 +267,45 @@ def finetune_lora_on_conditioning(
             for param_group in optimizer.param_groups:
                 param_group['lr'] = warmup_lr
         
-        # Sample random timestep using flow matching
-        # t ~ U(0, 1)
+        # Sample random timestep using flow matching: t ~ U(0, 1)
         t = torch.rand(B, device=device, dtype=dtype)
         
-        # Sample noise
+        # Sample noise in latent space
         noise = torch.randn_like(latents)
+        noise_packed = pack(noise, patch_size=patch_size)
         
-        # Flow matching: linear interpolation
-        # z_t = (1 - t) * noise + t * z
-        sigma_min = 1e-5
-        t_expand = t.view(B, 1, 1, 1, 1)
-        z_t = (1 - (1 - sigma_min) * t_expand) * noise + t_expand * latents
+        # Flow matching interpolation (following Open-Sora v2.0 convention)
+        # x_t = (1 - t) * x_0 + (1 - (1 - sigma_min) * (1-t)) * x_1
+        # Simplifies to: x_t = t * x_0 + (1 - (1 - sigma_min) * t) * noise
+        t_rev = 1 - t  # Reverse time for Open-Sora convention
+        t_expand = t_rev[:, None, None]
+        z_t_packed = t_expand * latents_packed + (1 - (1 - sigma_min) * t_expand) * noise_packed
         
-        # Target velocity: v = z - (1 - sigma_min) * noise
-        v_target = latents - (1 - sigma_min) * noise
+        # Target velocity: v = (1 - sigma_min) * noise - latents
+        v_target = (1 - sigma_min) * noise_packed - latents_packed
         
-        # Prepare model inputs
-        # The model expects specific input format based on MMDiT architecture
-        # We need to pack the latents and prepare positional embeddings
-        try:
-            from opensora.utils.sampling import pack, prepare_ids
-            
-            # Pack latents into sequence format
-            packed_z_t, img_ids = pack(z_t, patch_size=2)
-            
-            # Prepare text IDs
-            txt_ids = torch.zeros(
-                B, text_embeds["txt"].shape[1], 3, 
-                device=device, dtype=dtype
-            )
-            
-            # Forward pass through model
-            v_pred = model(
-                img=packed_z_t,
-                img_ids=img_ids,
-                txt=text_embeds["txt"],
-                txt_ids=txt_ids,
-                timesteps=t,
-                y_vec=text_embeds["vec"],
-                guidance=None,
-            )
-            
-            # Unpack prediction
-            from opensora.utils.sampling import unpack
-            v_pred_unpacked = unpack(
-                v_pred, 
-                height=H * 2,  # latent H -> pixel H in patches
-                width=W * 2,
-                num_frames=T,
-                patch_size=2,
-            )
-            
-            # Compute loss
-            loss = F.mse_loss(v_pred_unpacked.float(), v_target.float())
-            
-        except Exception as e:
-            # Fallback: simplified forward pass
-            # This handles cases where the model interface differs
-            loss = torch.tensor(0.0, device=device, requires_grad=True)
-            print(f"  Warning: Forward pass failed at step {step}: {e}")
+        # Forward pass through model
+        v_pred = model(
+            img=z_t_packed,
+            img_ids=img_ids,
+            txt=text_embeds["txt"],
+            txt_ids=txt_ids,
+            timesteps=t.to(dtype),
+            y_vec=text_embeds["vec"],
+            guidance=guidance_vec,
+        )
+        
+        # Compute MSE loss in packed format
+        loss = F.mse_loss(v_pred.float(), v_target.float())
         
         # Backward pass
-        if loss.requires_grad:
-            loss.backward()
-            
-            # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(lora_params, max_grad_norm)
-            
-            # Optimizer step
-            optimizer.step()
+        loss.backward()
+        
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(lora_params, max_grad_norm)
+        
+        # Optimizer step
+        optimizer.step()
         
         losses.append(loss.item())
     
