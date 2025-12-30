@@ -69,7 +69,7 @@ mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
 
 GT_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
 BASELINE_DIR="${PROJECT_ROOT}/lora_experiment/results/baseline"
-LORA_DIR="${PROJECT_ROOT}/lora_experiment/results/lora_r16_lr2e4_100steps"
+LORA_DIR="${PROJECT_ROOT}/lora_experiment/results/lora_r16_lr2e-4_20steps"
 OUTPUT_DIR="${PROJECT_ROOT}/lora_experiment/results/evaluation"
 
 # Override with environment variables if set
