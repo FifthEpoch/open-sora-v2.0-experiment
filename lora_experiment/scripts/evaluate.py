@@ -50,6 +50,55 @@ def load_video(video_path: str, max_frames: int = None) -> np.ndarray:
     return np.stack(frames, axis=0)
 
 
+def resize_video(video: np.ndarray, target_height: int, target_width: int) -> np.ndarray:
+    """Resize video frames to target resolution.
+    
+    Args:
+        video: Video array [T, H, W, C]
+        target_height: Target height
+        target_width: Target width
+    
+    Returns:
+        Resized video array [T, target_height, target_width, C]
+    """
+    import cv2
+    
+    T, H, W, C = video.shape
+    if H == target_height and W == target_width:
+        return video
+    
+    resized_frames = []
+    for t in range(T):
+        frame = cv2.resize(video[t], (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+        resized_frames.append(frame)
+    
+    return np.stack(resized_frames, axis=0)
+
+
+def match_video_shapes(pred: np.ndarray, gt: np.ndarray) -> tuple:
+    """Resize videos to match shapes for comparison.
+    
+    Resizes the prediction to match the ground truth dimensions.
+    
+    Args:
+        pred: Predicted video [T1, H1, W1, C]
+        gt: Ground truth video [T2, H2, W2, C]
+    
+    Returns:
+        Tuple of (resized_pred, gt) with matching spatial dimensions
+    """
+    # Match frame count
+    min_frames = min(pred.shape[0], gt.shape[0])
+    pred = pred[:min_frames]
+    gt = gt[:min_frames]
+    
+    # Match spatial dimensions (resize pred to match gt)
+    if pred.shape[1:3] != gt.shape[1:3]:
+        pred = resize_video(pred, gt.shape[1], gt.shape[2])
+    
+    return pred, gt
+
+
 def compute_psnr(pred: np.ndarray, gt: np.ndarray) -> float:
     """Compute PSNR between two videos."""
     mse = np.mean((pred.astype(float) - gt.astype(float)) ** 2)
@@ -211,10 +260,8 @@ def run_evaluation(args):
                         # Compare generation portion (skip conditioning frames in output)
                         baseline_gen = baseline_video[cond_frames:, :, :, :]
                         
-                        # Ensure same length
-                        min_len = min(len(baseline_gen), len(gt_gen_frames))
-                        baseline_gen = baseline_gen[:min_len]
-                        gt_for_baseline = gt_gen_frames[:min_len]
+                        # Match shapes (resize baseline to GT resolution for fair comparison)
+                        baseline_gen, gt_for_baseline = match_video_shapes(baseline_gen, gt_gen_frames)
                         
                         metrics["baseline_psnr"] = compute_psnr(baseline_gen, gt_for_baseline)
                         metrics["baseline_ssim"] = compute_ssim(baseline_gen, gt_for_baseline)
@@ -233,9 +280,8 @@ def run_evaluation(args):
                         # Compare generation portion
                         lora_gen = lora_video[cond_frames:, :, :, :]
                         
-                        min_len = min(len(lora_gen), len(gt_gen_frames))
-                        lora_gen = lora_gen[:min_len]
-                        gt_for_lora = gt_gen_frames[:min_len]
+                        # Match shapes (resize lora to GT resolution for fair comparison)
+                        lora_gen, gt_for_lora = match_video_shapes(lora_gen, gt_gen_frames)
                         
                         metrics["lora_psnr"] = compute_psnr(lora_gen, gt_for_lora)
                         metrics["lora_ssim"] = compute_ssim(lora_gen, gt_for_lora)
