@@ -75,7 +75,7 @@ DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
 # LoRA hyperparameters - can be overridden by environment variables
 LORA_RANK="${LORA_RANK:-16}"
 LORA_ALPHA="${LORA_ALPHA:-32}"
-LEARNING_RATE="${LEARNING_RATE:-2e-4}"
+LEARNING_RATE="${LEARNING_RATE:-1e-4}"  # Reduced from 2e-4 to prevent overfitting
 NUM_STEPS="${NUM_STEPS:-50}"  # Increased to 50 steps (device fixes should prevent OOM)
 WARMUP_STEPS="${WARMUP_STEPS:-5}"  # Proportional to 50 steps
 TARGET_MLP="${TARGET_MLP:-false}"
