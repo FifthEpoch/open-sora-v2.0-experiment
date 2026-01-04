@@ -107,9 +107,16 @@ def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.Da
     return result.head(n_samples)  # Ensure exact count
 
 
-def save_video(video_tensor: torch.Tensor, output_path: str, fps: int = 24):
-    """Save video tensor to file."""
+def save_video(
+    video_tensor: torch.Tensor,
+    output_path: str,
+    fps: int = 24,
+    target_height: int | None = None,
+    target_width: int | None = None,
+):
+    """Save video tensor to file with optional upscaling and higher encode quality."""
     import imageio
+    import cv2
     
     # video_tensor: [B, C, T, H, W] or [C, T, H, W]
     if video_tensor.dim() == 5:
@@ -122,9 +129,29 @@ def save_video(video_tensor: torch.Tensor, output_path: str, fps: int = 24):
     video = ((video + 1) / 2).clamp(0, 1)  # [-1, 1] -> [0, 1]
     video = (video * 255).to(torch.uint8).cpu().numpy()
     
-    # Save
+    # Optional resize to match conditioning resolution (e.g., 256x464)
+    if target_height is not None and target_width is not None:
+        resized_frames = []
+        for frame in video:
+            resized = cv2.resize(
+                frame,
+                (target_width, target_height),
+                interpolation=cv2.INTER_LINEAR,
+            )
+            resized_frames.append(resized)
+        video = resized_frames
+    
+    # Save with higher quality / bitrate to reduce blockiness
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    imageio.mimwrite(output_path, video, fps=fps)
+    imageio.mimwrite(
+        output_path,
+        video,
+        fps=fps,
+        codec="libx264",
+        quality=9,
+        bitrate="4M",
+        macro_block_size=None,
+    )
 
 
 def load_video_for_training(
@@ -538,9 +565,15 @@ def run_tta_experiment(args):
             gen_time = time.time() - gen_start
             total_gen_time += gen_time
             
-            # Save output video
+            # Save output video, upscaling to conditioning resolution (256x464) with higher quality encoding
             output_path = videos_dir / f"{video_name}_lora.mp4"
-            save_video(output, str(output_path), fps=24)
+            save_video(
+                output,
+                str(output_path),
+                fps=24,
+                target_height=256,
+                target_width=464,
+            )
             
             # Optionally save LoRA weights
             if args.save_lora_weights:
