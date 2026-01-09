@@ -28,8 +28,12 @@ fi
 
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
 module load anaconda3/2025.06
+# Some site conda activate hooks assume certain vars exist; avoid nounset crash.
+export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
+set +u
 eval "$(conda shell.bash hook)"
 conda activate opensora20
+set -u
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
