@@ -39,6 +39,9 @@ from tqdm import tqdm
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Shared timing utilities (repo root)
+from experiment_timing import PhaseTimer, TimingRecord, now_s, write_timing_files
+
 from colossalai.utils import set_seed
 from mmengine.config import Config
 
@@ -512,6 +515,7 @@ def run_tta_experiment(args):
     total_gen_time = 0
     success_count = 0
     fail_count = 0
+    timing_records: list[dict] = []
     
     for idx in tqdm(range(start_idx, len(df)), desc="LoRA TTA"):
         row = df.iloc[idx]
@@ -520,18 +524,21 @@ def run_tta_experiment(args):
         video_name = Path(video_path).stem
         
         try:
-            # Reset LoRA weights before each video (explicitly pass device)
-            reset_lora_weights(model, device=device)
+            phases: dict[str, float] = {}
+            pt = PhaseTimer(phases)
+            total_start = now_s()
             
             # Load and encode conditioning frames
-            latents, _ = load_video_for_training(
-                video_path, model_ae, 33, device, dtype
-            )
+            with pt.phase("encode_video"):
+                latents, _ = load_video_for_training(
+                    video_path, model_ae, 33, device, dtype
+                )
             
             # Encode text
-            with torch.no_grad():
-                txt_embed = model_t5(caption)
-                vec_embed = model_clip(caption)
+            with pt.phase("embed_text"):
+                with torch.no_grad():
+                    txt_embed = model_t5(caption)
+                    vec_embed = model_clip(caption)
             
             text_embeds = {
                 "txt": txt_embed,
@@ -539,48 +546,53 @@ def run_tta_experiment(args):
             }
             
             # Fine-tune LoRA on conditioning frames
-            losses, train_time = finetune_lora_on_conditioning(
-                model=model,
-                latents=latents,
-                text_embeds=text_embeds,
-                config=train_config,
-                device=device,
-                dtype=dtype,
-            )
+            with pt.phase("tta_train"):
+                # Reset LoRA weights before each video (explicitly pass device)
+                reset_lora_weights(model, device=device)
+
+                losses, train_time = finetune_lora_on_conditioning(
+                    model=model,
+                    latents=latents,
+                    text_embeds=text_embeds,
+                    config=train_config,
+                    device=device,
+                    dtype=dtype,
+                )
             total_train_time += train_time
             
             # Generate continuation with adapted model
-            gen_start = time.time()
-            
-            with torch.inference_mode():
-                output = api_fn(
-                    sampling_option,
-                    cond_type="v2v_head",
-                    text=[caption],
-                    ref=[video_path],
-                    seed=args.seed + idx,
-                    channel=cfg.model.get("in_channels", 64),
-                )
-            
-            gen_time = time.time() - gen_start
+            with pt.phase("generate"):
+                with torch.inference_mode():
+                    output = api_fn(
+                        sampling_option,
+                        cond_type="v2v_head",
+                        text=[caption],
+                        ref=[video_path],
+                        seed=args.seed + idx,
+                        channel=cfg.model.get("in_channels", 64),
+                    )
+            gen_time = phases.get("generate", 0.0)
             total_gen_time += gen_time
             
             # Save output video, upscaling to conditioning resolution (256x464) with higher quality encoding
             output_path = videos_dir / f"{video_name}_lora.mp4"
-            save_video(
-                output,
-                str(output_path),
-                fps=24,
-                target_height=256,
-                target_width=464,
-            )
+            with pt.phase("save_video"):
+                save_video(
+                    output,
+                    str(output_path),
+                    fps=24,
+                    target_height=256,
+                    target_width=464,
+                )
             
             # Optionally save LoRA weights
             if args.save_lora_weights:
-                lora_path = lora_weights_dir / f"{video_name}_lora.pt"
-                save_lora_weights(model, str(lora_path))
+                with pt.phase("save_lora_weights"):
+                    lora_path = lora_weights_dir / f"{video_name}_lora.pt"
+                    save_lora_weights(model, str(lora_path))
             
             # Record result
+            total_s = now_s() - total_start
             result = {
                 "idx": idx,
                 "video_name": video_name,
@@ -595,6 +607,21 @@ def run_tta_experiment(args):
                 "success": True,
             }
             results.append(result)
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=True,
+                    phases_s=phases,
+                    total_s=total_s,
+                    extra={
+                        "caption": caption,
+                        "lora_rank": args.lora_rank,
+                        "learning_rate": args.learning_rate,
+                        "num_steps": args.num_steps,
+                    },
+                ).to_dict()
+            )
             success_count += 1
             
             # Cleanup after successful processing
@@ -611,6 +638,16 @@ def run_tta_experiment(args):
                 "error": str(e),
                 "success": False,
             })
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=False,
+                    phases_s={},
+                    total_s=0.0,
+                    extra={"error": str(e)},
+                ).to_dict()
+            )
             fail_count += 1
         
         # Save checkpoint every 10 videos
@@ -630,6 +667,9 @@ def run_tta_experiment(args):
     # Save final results
     with open(output_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
+
+    # Save per-video timing + run-level timing summary
+    write_timing_files(output_dir, timing_records)
     
     # Compute metrics summary
     successful_results = [r for r in results if r.get("success", False)]

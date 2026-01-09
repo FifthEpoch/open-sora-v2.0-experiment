@@ -42,6 +42,9 @@ from opensora.utils.sampling import (
 )
 from opensora.datasets.utils import save_sample
 
+# Shared timing utilities (repo root)
+from experiment_timing import PhaseTimer, TimingRecord, now_s, write_timing_files
+
 
 def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.DataFrame:
     """
@@ -245,6 +248,7 @@ def run_baseline_generation(args):
     total_time = 0
     success_count = 0
     fail_count = 0
+    timing_records: list[dict] = []
     
     for idx in tqdm(range(start_idx, len(df)), desc="Generating baselines"):
         row = df.iloc[idx]
@@ -253,25 +257,31 @@ def run_baseline_generation(args):
         video_name = Path(video_path).stem
         
         try:
-            start_time = time.time()
+            phases: dict[str, float] = {}
+            pt = PhaseTimer(phases)
+            total_start = now_s()
             
             # Generate using the API function
-            with torch.inference_mode():
-                output = api_fn(
-                    sampling_option,
-                    cond_type="v2v_head",
-                    text=[caption],
-                    ref=[video_path],
-                    seed=args.seed + idx,
-                    channel=cfg.model.get("in_channels", 64),
-                )
+            with pt.phase("generate"):
+                with torch.inference_mode():
+                    output = api_fn(
+                        sampling_option,
+                        cond_type="v2v_head",
+                        text=[caption],
+                        ref=[video_path],
+                        seed=args.seed + idx,
+                        channel=cfg.model.get("in_channels", 64),
+                    )
             
-            gen_time = time.time() - start_time
+            gen_time = phases.get("generate", 0.0)
             total_time += gen_time
             
             # Save output video
             output_path = videos_dir / f"{video_name}_baseline.mp4"
-            save_video(output, str(output_path), fps=24)
+            with pt.phase("save_video"):
+                save_video(output, str(output_path), fps=24)
+
+            total_s = now_s() - total_start
             
             # Record result
             results.append({
@@ -283,6 +293,17 @@ def run_baseline_generation(args):
                 "generation_time": gen_time,
                 "success": True,
             })
+
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=True,
+                    phases_s=phases,
+                    total_s=total_s,
+                    extra={"caption": caption},
+                ).to_dict()
+            )
             
             success_count += 1
             
@@ -295,6 +316,16 @@ def run_baseline_generation(args):
                 "error": str(e),
                 "success": False,
             })
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=False,
+                    phases_s={},
+                    total_s=0.0,
+                    extra={"error": str(e)},
+                ).to_dict()
+            )
             fail_count += 1
         
         # Save checkpoint every 10 videos
@@ -312,6 +343,9 @@ def run_baseline_generation(args):
     # Save final results
     with open(output_dir / "results.json", "w") as f:
         json.dump(results, f, indent=2)
+
+    # Save per-video timing + run-level timing summary
+    write_timing_files(output_dir, timing_records)
     
     # Summary
     print("\n" + "=" * 70)

@@ -28,6 +28,9 @@ from opensora.utils.sampling import SamplingOption, prepare_api, prepare_models,
 from delta_experiment.scripts.common import VideoSelectionConfig, project_root, select_videos, ensure_dir, write_json, save_video, load_video_for_training
 from delta_experiment.scripts.delta_modules import DeltaAWrapper, make_delta_global
 
+# Shared timing utilities (repo root)
+from experiment_timing import PhaseTimer, TimingRecord, now_s, write_timing_files
+
 
 def optimize_delta_global(
     model,
@@ -214,6 +217,7 @@ def main():
     results = []
     total_train = 0.0
     total_gen = 0.0
+    timing_records: list[dict] = []
 
     for idx in tqdm(range(len(df)), desc="delta-A"):
         row = df.iloc[idx]
@@ -222,50 +226,61 @@ def main():
         video_name = Path(video_path).stem
 
         try:
+            phases: dict[str, float] = {}
+            pt = PhaseTimer(phases)
+            total_start = now_s()
+
             # Create a fresh δ for this video
             delta = make_delta_global(hidden_size, device=device, dtype=dtype)
 
-            latents, _ = load_video_for_training(video_path, model_ae, 33, device, dtype)
-            with torch.no_grad():
-                txt_embed = model_t5(caption)
-                vec_embed = model_clip(caption)
+            with pt.phase("encode_video"):
+                latents, _ = load_video_for_training(video_path, model_ae, 33, device, dtype)
+
+            with pt.phase("embed_text"):
+                with torch.no_grad():
+                    txt_embed = model_t5(caption)
+                    vec_embed = model_clip(caption)
             text_embeds = {"txt": txt_embed, "vec": vec_embed}
 
-            losses, train_time = optimize_delta_global(
-                model=model,
-                delta_wrapper=delta_wrapper,
-                delta=delta,
-                latents=latents,
-                text_embeds=text_embeds,
-                device=device,
-                dtype=dtype,
-                num_steps=args.delta_steps,
-                lr=args.delta_lr,
-                warmup_steps=args.warmup_steps,
-                max_grad_norm=args.max_grad_norm,
-                weight_decay=args.weight_decay,
-                delta_l2=args.delta_l2,
-            )
+            with pt.phase("tta_train"):
+                losses, train_time = optimize_delta_global(
+                    model=model,
+                    delta_wrapper=delta_wrapper,
+                    delta=delta,
+                    latents=latents,
+                    text_embeds=text_embeds,
+                    device=device,
+                    dtype=dtype,
+                    num_steps=args.delta_steps,
+                    lr=args.delta_lr,
+                    warmup_steps=args.warmup_steps,
+                    max_grad_norm=args.max_grad_norm,
+                    weight_decay=args.weight_decay,
+                    delta_l2=args.delta_l2,
+                )
             total_train += train_time
 
             # Apply δ during generation by enabling wrapper (no grad)
-            delta_wrapper.enable(delta)
-            gen_start = time.time()
-            with torch.inference_mode():
-                output = api_fn(
-                    sampling_option,
-                    cond_type="v2v_head",
-                    text=[caption],
-                    ref=[video_path],
-                    seed=args.seed + idx,
-                    channel=cfg.model.get("in_channels", 64),
-                )
-            gen_time = time.time() - gen_start
+            with pt.phase("generate"):
+                delta_wrapper.enable(delta)
+                with torch.inference_mode():
+                    output = api_fn(
+                        sampling_option,
+                        cond_type="v2v_head",
+                        text=[caption],
+                        ref=[video_path],
+                        seed=args.seed + idx,
+                        channel=cfg.model.get("in_channels", 64),
+                    )
+                delta_wrapper.disable()
+            gen_time = phases.get("generate", 0.0)
             total_gen += gen_time
-            delta_wrapper.disable()
 
             output_path = videos_dir / f"{video_name}_deltaA.mp4"
-            save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
+            with pt.phase("save_video"):
+                save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
+
+            total_s = now_s() - total_start
 
             results.append({
                 "idx": idx,
@@ -280,6 +295,21 @@ def main():
                 "avg_loss": sum(losses) / len(losses) if losses else None,
                 "success": True,
             })
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=True,
+                    phases_s=phases,
+                    total_s=total_s,
+                    extra={
+                        "caption": caption,
+                        "delta_steps": args.delta_steps,
+                        "delta_lr": args.delta_lr,
+                        "delta_l2": args.delta_l2,
+                    },
+                ).to_dict()
+            )
 
             del latents, txt_embed, vec_embed, output, losses, delta
 
@@ -291,11 +321,22 @@ def main():
                 "error": str(e),
                 "success": False,
             })
+            timing_records.append(
+                TimingRecord(
+                    idx=idx,
+                    video_name=video_name,
+                    success=False,
+                    phases_s={},
+                    total_s=0.0,
+                    extra={"error": str(e)},
+                ).to_dict()
+            )
 
         gc.collect()
         torch.cuda.empty_cache()
 
     write_json(out_dir / "results.json", results)
+    write_timing_files(out_dir, timing_records)
     write_json(out_dir / "metrics_summary.json", {
         "method": "delta_a_global_vec",
         "num_videos": len(df),
