@@ -78,13 +78,51 @@ class VideoSelectionConfig:
     seed: int = 42
 
 
-def select_videos(metadata_csv: Path, cfg: VideoSelectionConfig) -> pd.DataFrame:
+def load_video_name_list_from_results(results_json: Path, max_videos: int | None = None) -> list[str]:
+    """
+    Load a stable video_name list from a prior experiment's results.json.
+
+    This is used to ensure *exactly the same* 100 videos across baselines and methods.
+    """
+    with open(results_json) as f:
+        items = json.load(f)
+    names = [it["video_name"] for it in items if it.get("success", False) and "video_name" in it]
+    if max_videos is not None:
+        names = names[:max_videos]
+    return names
+
+
+def select_videos(metadata_csv: Path, cfg: VideoSelectionConfig, reference_results_json: Path | None = None) -> pd.DataFrame:
+    """
+    Select videos either by (a) reproducing stratified sampling, or (b) following a reference results.json list.
+
+    Using a reference results.json is the safest way to guarantee identical video sets across experiments.
+    """
     df = pd.read_csv(metadata_csv)
+
+    if reference_results_json is not None:
+        names = load_video_name_list_from_results(reference_results_json, max_videos=cfg.max_videos)
+        # Map by stem of path
+        df = df.copy()
+        df["video_name"] = df["path"].apply(lambda p: Path(p).stem)
+        lookup = df.set_index("video_name", drop=False)
+        rows = []
+        for n in names:
+            if n in lookup.index:
+                rows.append(lookup.loc[n])
+        if rows:
+            out = pd.DataFrame(rows)
+            # If lookup.loc returns a Series for unique index, normalize
+            if isinstance(out.iloc[0], pd.Series):
+                pass
+            return out.reset_index(drop=True)
+
+    # Fallback to local stratified/head selection
     if cfg.stratified and "class" in df.columns and cfg.max_videos is not None:
         df = stratified_sample(df, cfg.max_videos, seed=cfg.seed)
     elif cfg.max_videos is not None:
         df = df.head(cfg.max_videos)
-    return df
+    return df.reset_index(drop=True)
 
 
 def project_root() -> Path:

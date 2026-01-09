@@ -45,19 +45,22 @@ def main():
 
     rows = []
 
-    def row_from(summary: dict, name: str) -> dict:
+    def row_from(summary: dict, name: str, side: str) -> dict:
+        """
+        side: 'baseline' -> use baseline_* metrics, 'lora' -> use lora_* metrics.
+        """
+        prefix = "baseline_" if side == "baseline" else "lora_"
         return {
             "name": name,
-            "psnr": fmt(summary.get("lora_psnr_mean") or summary.get("baseline_psnr_mean"),
-                        summary.get("lora_psnr_std") or summary.get("baseline_psnr_std"), digits=2),
-            "ssim": fmt(summary.get("lora_ssim_mean") or summary.get("baseline_ssim_mean"),
-                        summary.get("lora_ssim_std") or summary.get("baseline_ssim_std"), digits=4),
-            "lpips": fmt(summary.get("lora_lpips_mean") or summary.get("baseline_lpips_mean"),
-                         summary.get("lora_lpips_std") or summary.get("baseline_lpips_std"), digits=4),
+            "psnr": fmt(summary.get(f\"{prefix}psnr_mean\"), summary.get(f\"{prefix}psnr_std\"), digits=2),
+            "ssim": fmt(summary.get(f\"{prefix}ssim_mean\"), summary.get(f\"{prefix}ssim_std\"), digits=4),
+            "lpips": fmt(summary.get(f\"{prefix}lpips_mean\"), summary.get(f\"{prefix}lpips_std\"), digits=4),
         }
 
-    rows.append(row_from(baseline, "baseline"))
-    rows.append(row_from(bestlora, "best_lora"))
+    # baseline_eval_dir is a baseline_vs_delta summary -> baseline_* refers to true baseline
+    rows.append(row_from(baseline, "baseline", side="baseline"))
+    # bestlora_eval_dir is a bestlora_vs_delta summary -> baseline_* refers to best LoRA
+    rows.append(row_from(bestlora, "best_lora", side="baseline"))
 
     for key, label in [
         ("delta_a_eval_dir", "delta_A"),
@@ -66,7 +69,7 @@ def main():
     ]:
         p = getattr(args, key)
         if p:
-            rows.append(row_from(load_summary(Path(p)), label))
+            rows.append(row_from(load_summary(Path(p)), label, side="lora"))
 
     out = {
         "baseline_eval_dir": args.baseline_eval_dir,

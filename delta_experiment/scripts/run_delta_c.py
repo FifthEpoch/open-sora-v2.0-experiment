@@ -137,6 +137,8 @@ def main():
     parser.add_argument("--max-videos", type=int, default=100)
     parser.add_argument("--stratified", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--reference-results-json", type=str, default=None,
+                        help="Optional: path to results.json to reuse the exact same video list/order (recommended).")
 
     parser.add_argument("--delta-steps", type=int, default=20)
     parser.add_argument("--delta-lr", type=float, default=1e-2)
@@ -162,7 +164,12 @@ def main():
     videos_dir = ensure_dir(out_dir / "videos")
     write_json(out_dir / "config.json", vars(args))
 
-    df = select_videos(data_dir / "metadata.csv", VideoSelectionConfig(max_videos=args.max_videos, stratified=args.stratified, seed=args.seed))
+    ref = Path(args.reference_results_json) if args.reference_results_json else None
+    df = select_videos(
+        data_dir / "metadata.csv",
+        VideoSelectionConfig(max_videos=args.max_videos, stratified=args.stratified, seed=args.seed),
+        reference_results_json=ref,
+    )
 
     cfg_path = root / "configs" / "diffusion" / "inference" / "256px.py"
     cfg = Config.fromfile(str(cfg_path))

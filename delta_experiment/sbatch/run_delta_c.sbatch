@@ -57,6 +57,7 @@ SEED="${SEED:-42}"
 CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_c.py \
   --data-dir ${DATA_DIR} \
   --output-dir ${OUT_DIR} \
+  --reference-results-json ${PROJECT_ROOT}/lora_experiment/results/baseline/results.json \
   --delta-steps ${DELTA_STEPS} \
   --delta-lr ${DELTA_LR} \
   --warmup-steps ${WARMUP_STEPS} \
