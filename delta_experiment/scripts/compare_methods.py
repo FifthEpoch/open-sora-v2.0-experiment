@@ -52,9 +52,9 @@ def main():
         prefix = "baseline_" if side == "baseline" else "lora_"
         return {
             "name": name,
-            "psnr": fmt(summary.get(f\"{prefix}psnr_mean\"), summary.get(f\"{prefix}psnr_std\"), digits=2),
-            "ssim": fmt(summary.get(f\"{prefix}ssim_mean\"), summary.get(f\"{prefix}ssim_std\"), digits=4),
-            "lpips": fmt(summary.get(f\"{prefix}lpips_mean\"), summary.get(f\"{prefix}lpips_std\"), digits=4),
+            "psnr": fmt(summary.get(f"{prefix}psnr_mean"), summary.get(f"{prefix}psnr_std"), digits=2),
+            "ssim": fmt(summary.get(f"{prefix}ssim_mean"), summary.get(f"{prefix}ssim_std"), digits=4),
+            "lpips": fmt(summary.get(f"{prefix}lpips_mean"), summary.get(f"{prefix}lpips_std"), digits=4),
         }
 
     # baseline_eval_dir is a baseline_vs_delta summary -> baseline_* refers to true baseline
