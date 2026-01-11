@@ -17,7 +17,9 @@ Example usage:
 from __future__ import annotations
 
 import argparse
+import glob
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -121,11 +123,19 @@ def main() -> None:
     parser.add_argument("--output-json", type=str, default=None)
     args = parser.parse_args()
 
-    run_dirs = sorted(Path().glob(args.runs_glob))
+    matches = glob.glob(args.runs_glob)
+    run_dirs = sorted([Path(m) for m in matches])
     if not run_dirs:
-        raise FileNotFoundError(f"No run directories matched: {args.runs_glob}")
+        cwd = os.getcwd()
+        raise FileNotFoundError(
+            f"No run directories matched: {args.runs_glob}\n"
+            f"cwd: {cwd}\n"
+            f"Tip: run `ls {args.runs_glob}` to confirm the pattern, or try a broader glob like "
+            f"`--runs-glob \"delta_experiment/results/delta_b_sweep/*\"`."
+        )
 
     rows: list[dict[str, Any]] = []
+    missing_eval: list[str] = []
     for run_dir in run_dirs:
         if not run_dir.is_dir():
             continue
@@ -133,6 +143,7 @@ def main() -> None:
         summary = load_json(run_dir / args.eval_subdir / "summary.json")
         if not summary:
             # Skip runs that haven't been evaluated yet.
+            missing_eval.append(run_dir.name)
             continue
 
         cfg = load_json(run_dir / "config.json")
@@ -195,7 +206,12 @@ def main() -> None:
                 indent=2,
             )
 
-    print(f"Wrote {len(rows)} rows to {out_csv}")
+    print(f"Found {len(run_dirs)} run dirs for pattern: {args.runs_glob}")
+    print(f"Wrote {len(rows)} evaluated rows to {out_csv}")
+    if missing_eval:
+        preview = ", ".join(missing_eval[:10])
+        more = "" if len(missing_eval) <= 10 else f" (+{len(missing_eval) - 10} more)"
+        print(f"Skipped {len(missing_eval)} runs missing {args.eval_subdir}/summary.json: {preview}{more}")
     if args.output_json:
         print(f"Wrote JSON summary to {args.output_json}")
 
