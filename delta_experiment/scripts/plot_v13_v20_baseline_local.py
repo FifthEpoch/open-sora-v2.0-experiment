@@ -23,10 +23,28 @@ V13_BASELINE: Dict[str, float] = {
     "lpips": 0.7185019291477439,
 }
 
+# v1.3 best "LoRA/TTA" run metrics (from the hp sweep summary snippet you provided):
+# option2_20steps_5e5:
+#   avg_psnr_finetuned=10.98881351066431
+#   avg_ssim_finetuned=0.2640347222153441
+#   avg_lpips_finetuned=0.6463043822182549
+V13_TTA_BEST: Dict[str, float] = {
+    "psnr": 10.98881351066431,
+    "ssim": 0.2640347222153441,
+    "lpips": 0.6463043822182549,
+}
+
 V20_BASELINE: Dict[str, float] = {
     "psnr": 15.494961792163876,
     "ssim": 0.49427606615343406,
     "lpips": 0.41047981577459725,
+}
+
+# v2.0 best LoRA/TTA run metrics (from lora_experiment/results/evaluation/summary.json you pasted)
+V20_TTA_BEST: Dict[str, float] = {
+    "psnr": 15.676040090409934,
+    "ssim": 0.5071047728639196,
+    "lpips": 0.3954454526491463,
 }
 
 V13_COLOR = "#4985B6"
@@ -111,14 +129,33 @@ def save_single_metric_plot(
     v20_val = v20[metric_key]
 
     fig, ax = plt.subplots(figsize=(5.5, 4))
-    ax.bar(
-        ["v1.3", "v2.0"],
-        [v13_val, v20_val],
-        color=[V13_COLOR, V20_COLOR],
-    )
+    # We now plot four bars: baseline + best TTA/LoRA for each version.
+    v13_tta = V13_TTA_BEST[metric_key]
+    v20_tta = V20_TTA_BEST[metric_key]
+
+    labels = ["v1.3\nbaseline", "v1.3\nTTA", "v2.0\nbaseline", "v2.0\nTTA"]
+    values = [v13_val, v13_tta, v20_val, v20_tta]
+    colors = [V13_COLOR, V13_COLOR, V20_COLOR, V20_COLOR]
+    alphas = [0.55, 1.0, 0.55, 1.0]
+
+    bars = ax.bar(labels, values, color=colors)
+    for b, a in zip(bars, alphas):
+        b.set_alpha(a)
     ax.set_title(title)
     ax.set_ylabel(metric_label)
     ax.grid(axis="y", alpha=0.25)
+    ax.legend(
+        handles=[
+            plt.Rectangle((0, 0), 1, 1, color=V13_COLOR, alpha=0.55),
+            plt.Rectangle((0, 0), 1, 1, color=V13_COLOR, alpha=1.0),
+            plt.Rectangle((0, 0), 1, 1, color=V20_COLOR, alpha=0.55),
+            plt.Rectangle((0, 0), 1, 1, color=V20_COLOR, alpha=1.0),
+        ],
+        labels=["v1.3 baseline", "v1.3 TTA", "v2.0 baseline", "v2.0 TTA"],
+        frameon=False,
+        fontsize=9,
+        loc="best",
+    )
 
     # Metric-specific y scaling.
     if metric_key == "psnr":
@@ -151,6 +188,11 @@ def main() -> None:
     args = p.parse_args()
 
     print_table(V13_BASELINE, V20_BASELINE)
+    # Also print the TTA/LoRA best runs for reference.
+    print("Best TTA/LoRA (as provided in logs):")
+    print(f"  v1.3 best TTA: PSNR={fmt(V13_TTA_BEST['psnr'])}, SSIM={fmt(V13_TTA_BEST['ssim'])}, LPIPS={fmt(V13_TTA_BEST['lpips'])}")
+    print(f"  v2.0 best TTA: PSNR={fmt(V20_TTA_BEST['psnr'])}, SSIM={fmt(V20_TTA_BEST['ssim'])}, LPIPS={fmt(V20_TTA_BEST['lpips'])}")
+    print("")
     out_dir = Path(args.output_dir)
     save_single_metric_plot(
         out_path=out_dir / "v13_vs_v20_baseline_psnr.png",
