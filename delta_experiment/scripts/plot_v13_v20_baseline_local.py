@@ -29,6 +29,9 @@ V20_BASELINE: Dict[str, float] = {
     "lpips": 0.41047981577459725,
 }
 
+V13_COLOR = "#6C68BF"
+V20_COLOR = "#0037FF"
+
 
 def fmt(x: float, ndigits: int = 4) -> str:
     return f"{x:.{ndigits}f}"
@@ -108,7 +111,11 @@ def save_single_metric_plot(
     v20_val = v20[metric_key]
 
     fig, ax = plt.subplots(figsize=(5.5, 4))
-    ax.bar(["v1.3", "v2.0"], [v13_val, v20_val])
+    ax.bar(
+        ["v1.3", "v2.0"],
+        [v13_val, v20_val],
+        color=[V13_COLOR, V20_COLOR],
+    )
     ax.set_title(title)
     ax.set_ylabel(metric_label)
     ax.grid(axis="y", alpha=0.25)
