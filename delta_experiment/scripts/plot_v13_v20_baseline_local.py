@@ -50,6 +50,9 @@ V20_TTA_BEST: Dict[str, float] = {
 V13_COLOR = "#4985B6"
 V20_COLOR = "#0037FF"
 
+BAR_WIDTH = 0.55  # thinner bars; bars touch within a version group (dx == width)
+GROUP_GAP = 0.55  # visual gap between v1.3 and v2.0 groups (in x-axis units)
+
 
 def fmt(x: float, ndigits: int = 4) -> str:
     return f"{x:.{ndigits}f}"
@@ -133,17 +136,26 @@ def save_single_metric_plot(
     v13_tta = V13_TTA_BEST[metric_key]
     v20_tta = V20_TTA_BEST[metric_key]
 
-    labels = ["v1.3\nbaseline", "v1.3\nTTA", "v2.0\nbaseline", "v2.0\nTTA"]
+    # Grouped bars:
+    # - v1.3 baseline and v1.3 TTA touch (no gap)
+    # - v2.0 baseline and v2.0 TTA touch (no gap)
+    # - keep a visible gap between the v1.3 group and v2.0 group
+    start_v13 = 0.0
+    start_v20 = start_v13 + 2 * BAR_WIDTH + GROUP_GAP
+
+    xs = [start_v13, start_v13 + BAR_WIDTH, start_v20, start_v20 + BAR_WIDTH]
     values = [v13_val, v13_tta, v20_val, v20_tta]
     colors = [V13_COLOR, V13_COLOR, V20_COLOR, V20_COLOR]
     alphas = [0.55, 1.0, 0.55, 1.0]
 
-    bars = ax.bar(labels, values, color=colors)
+    bars = ax.bar(xs, values, width=BAR_WIDTH, color=colors)
     for b, a in zip(bars, alphas):
         b.set_alpha(a)
     ax.set_title(title)
     ax.set_ylabel(metric_label)
     ax.grid(axis="y", alpha=0.25)
+    ax.set_xticks([start_v13 + BAR_WIDTH, start_v20 + BAR_WIDTH])
+    ax.set_xticklabels(["v1.3", "v2.0"])
     ax.legend(
         handles=[
             plt.Rectangle((0, 0), 1, 1, color=V13_COLOR, alpha=0.55),
