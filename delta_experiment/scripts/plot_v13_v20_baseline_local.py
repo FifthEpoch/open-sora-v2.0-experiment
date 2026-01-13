@@ -51,9 +51,9 @@ V20_TTA_BEST: Dict[str, float] = {
 V13_COLOR = "#4985B6"
 V20_COLOR = "#0037FF"
 
-BAR_WIDTH = 0.32  # thinner bars; bars touch within a version group (dx == width)
-GROUP_GAP = 0.22  # visual gap between v1.3 and v2.0 groups (in x-axis units)
-X_TICK_FONTSIZE = 9
+BAR_WIDTH = 0.22  # thinner bars; bars touch within a version group (dx == width)
+GROUP_GAP = 0.18  # visual gap between v1.3 and v2.0 groups (in x-axis units)
+X_TICK_FONTSIZE = 8
 TITLE_WRAP_CHARS = 38
 
 
@@ -134,7 +134,7 @@ def save_single_metric_plot(
     v13_val = v13[metric_key]
     v20_val = v20[metric_key]
 
-    fig, ax = plt.subplots(figsize=(4.9, 4))
+    fig, ax = plt.subplots(figsize=(4.4, 4))
     # We now plot four bars: baseline + best TTA/LoRA for each version.
     v13_tta = V13_TTA_BEST[metric_key]
     v20_tta = V20_TTA_BEST[metric_key]
@@ -163,7 +163,7 @@ def save_single_metric_plot(
         fontsize=X_TICK_FONTSIZE,
     )
     # Tighten x-limits so the plot doesn't leave a large empty center gap.
-    pad = BAR_WIDTH * 0.65
+    pad = BAR_WIDTH * 0.85
     ax.set_xlim(min(xs) - pad, max(xs) + pad)
     ax.legend(
         handles=[
