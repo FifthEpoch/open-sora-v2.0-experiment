@@ -52,7 +52,7 @@ V13_COLOR = "#4985B6"
 V20_COLOR = "#0037FF"
 
 BAR_WIDTH = 0.32  # thinner bars; bars touch within a version group (dx == width)
-GROUP_GAP = 0.50  # visual gap between v1.3 and v2.0 groups (in x-axis units)
+GROUP_GAP = 0.22  # visual gap between v1.3 and v2.0 groups (in x-axis units)
 X_TICK_FONTSIZE = 9
 TITLE_WRAP_CHARS = 38
 
@@ -134,7 +134,7 @@ def save_single_metric_plot(
     v13_val = v13[metric_key]
     v20_val = v20[metric_key]
 
-    fig, ax = plt.subplots(figsize=(5.5, 4))
+    fig, ax = plt.subplots(figsize=(4.9, 4))
     # We now plot four bars: baseline + best TTA/LoRA for each version.
     v13_tta = V13_TTA_BEST[metric_key]
     v20_tta = V20_TTA_BEST[metric_key]
@@ -162,6 +162,9 @@ def save_single_metric_plot(
         ["v1.3\nbaseline", "v1.3\nTTA", "v2.0\nbaseline", "v2.0\nTTA"],
         fontsize=X_TICK_FONTSIZE,
     )
+    # Tighten x-limits so the plot doesn't leave a large empty center gap.
+    pad = BAR_WIDTH * 0.65
+    ax.set_xlim(min(xs) - pad, max(xs) + pad)
     ax.legend(
         handles=[
             plt.Rectangle((0, 0), 1, 1, color=V13_COLOR, alpha=0.55),
