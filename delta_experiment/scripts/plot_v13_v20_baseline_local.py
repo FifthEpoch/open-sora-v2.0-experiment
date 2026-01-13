@@ -29,7 +29,7 @@ V20_BASELINE: Dict[str, float] = {
     "lpips": 0.41047981577459725,
 }
 
-V13_COLOR = "#6C68BF"
+V13_COLOR = "#4985B6"
 V20_COLOR = "#0037FF"
 
 
