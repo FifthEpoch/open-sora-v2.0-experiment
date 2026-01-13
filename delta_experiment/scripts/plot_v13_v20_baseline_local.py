@@ -5,7 +5,9 @@ Generate a local plot comparing Open-Sora v1.3 vs v2.0 baseline performance for 
 This script is intentionally self-contained: it uses the baseline metrics values you provided in chat.
 
 Outputs (by default):
-  - delta_experiment/plots/v13_vs_v20_baseline_bar.png
+  - delta_experiment/plots/v13_vs_v20_baseline_psnr.png
+  - delta_experiment/plots/v13_vs_v20_baseline_ssim.png
+  - delta_experiment/plots/v13_vs_v20_baseline_lpips.png
 """
 
 from __future__ import annotations
@@ -83,13 +85,56 @@ def save_plot(out_path: Path, v13: Dict[str, float], v20: Dict[str, float], titl
     plt.close(fig)
 
 
+def save_single_metric_plot(
+    out_path: Path,
+    metric_key: str,
+    metric_label: str,
+    v13: Dict[str, float],
+    v20: Dict[str, float],
+    title: str,
+) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        raise RuntimeError(
+            "matplotlib is required to generate the plot. "
+            "Activate the same conda env you use for evaluation (it typically includes matplotlib)."
+        ) from e
+
+    v13_val = v13[metric_key]
+    v20_val = v20[metric_key]
+
+    fig, ax = plt.subplots(figsize=(5.5, 4))
+    ax.bar(["v1.3", "v2.0"], [v13_val, v20_val])
+    ax.set_title(title)
+    ax.set_ylabel(metric_label)
+    ax.grid(axis="y", alpha=0.25)
+
+    # Metric-specific y scaling.
+    if metric_key == "psnr":
+        ymax = max(v13_val, v20_val) + 1.0
+        ymin = max(0.0, min(v13_val, v20_val) - 1.0)
+        ax.set_ylim(ymin, ymax)
+    else:
+        # SSIM/LPIPS are in [0,1]; keep a consistent scale.
+        ax.set_ylim(0.0, 1.0)
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--output",
+        "--output-dir",
         type=str,
-        default="delta_experiment/plots/v13_vs_v20_baseline_bar.png",
-        help="Where to write the plot PNG (relative to repo root is fine).",
+        default="delta_experiment/plots",
+        help="Directory to write plots into (relative to repo root is fine).",
     )
     p.add_argument(
         "--title",
@@ -99,8 +144,32 @@ def main() -> None:
     args = p.parse_args()
 
     print_table(V13_BASELINE, V20_BASELINE)
-    save_plot(Path(args.output), V13_BASELINE, V20_BASELINE, title=args.title)
-    print(f"Wrote plot: {args.output}")
+    out_dir = Path(args.output_dir)
+    save_single_metric_plot(
+        out_path=out_dir / "v13_vs_v20_baseline_psnr.png",
+        metric_key="psnr",
+        metric_label="PSNR (dB)",
+        v13=V13_BASELINE,
+        v20=V20_BASELINE,
+        title=f"{args.title} — PSNR",
+    )
+    save_single_metric_plot(
+        out_path=out_dir / "v13_vs_v20_baseline_ssim.png",
+        metric_key="ssim",
+        metric_label="SSIM",
+        v13=V13_BASELINE,
+        v20=V20_BASELINE,
+        title=f"{args.title} — SSIM",
+    )
+    save_single_metric_plot(
+        out_path=out_dir / "v13_vs_v20_baseline_lpips.png",
+        metric_key="lpips",
+        metric_label="LPIPS (lower is better)",
+        v13=V13_BASELINE,
+        v20=V20_BASELINE,
+        title=f"{args.title} — LPIPS",
+    )
+    print(f"Wrote plots to: {out_dir}")
 
 
 if __name__ == "__main__":
