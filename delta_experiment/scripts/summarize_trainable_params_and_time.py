@@ -34,6 +34,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
+DEFAULT_HIDDEN_SIZE = 3072  # Open-Sora v2.0 256px config (vec-space dim)
+
+
 def _load_json(path: Path) -> Any:
     with path.open("r") as f:
         return json.load(f)
@@ -58,20 +61,23 @@ def _fmt(x: Optional[float]) -> str:
     return f"{x:.3f}"
 
 
-def _infer_hidden_size(config: Dict[str, Any]) -> Optional[int]:
-    # Most of our runs use the 256px config with hidden_size=3072, but keep this flexible.
-    # We store it in some configs; if not, return None.
+def _infer_hidden_size(config: Dict[str, Any]) -> int:
+    """
+    Infer vec-space dimension used by δ (hidden_size).
+
+    Many run config.json files don't persist hidden_size; in that case we fall back to
+    the Open-Sora v2.0 256px default (3072).
+    """
     for key in ["hidden_size", "model.hidden_size", "cfg.model.hidden_size"]:
         v = _get(config, key)
         if isinstance(v, int):
             return v
-    return None
+    return DEFAULT_HIDDEN_SIZE
 
 
-def trainable_params_delta_a(config: Dict[str, Any]) -> Optional[int]:
+def trainable_params_delta_a(config: Dict[str, Any]) -> int:
     # Option A: one vec-space delta (size = hidden_size)
-    hs = _infer_hidden_size(config)
-    return int(hs) if hs is not None else None
+    return int(_infer_hidden_size(config))
 
 
 def trainable_params_delta_b(config: Dict[str, Any]) -> Optional[int]:
@@ -80,9 +86,7 @@ def trainable_params_delta_b(config: Dict[str, Any]) -> Optional[int]:
     #   delta_double_groups: groups_double vectors (hidden_size each)
     #   delta_single_groups: groups_single vectors (hidden_size each)
     #   delta_final: 1 vector (hidden_size)
-    hs = _infer_hidden_size(config)
-    if hs is None:
-        return None
+    hs = int(_infer_hidden_size(config))
     gd = _get(config, "groups_double") or _get(config, "args.groups_double") or _get(config, "extra.groups_double")
     gs = _get(config, "groups_single") or _get(config, "args.groups_single") or _get(config, "extra.groups_single")
     if not isinstance(gd, int) or not isinstance(gs, int):
@@ -91,7 +95,7 @@ def trainable_params_delta_b(config: Dict[str, Any]) -> Optional[int]:
         gs = config.get("groups_single")
     if not isinstance(gd, int) or not isinstance(gs, int):
         return None
-    return int(hs) * (int(gd) + int(gs) + 1)
+    return hs * (int(gd) + int(gs) + 1)
 
 
 def trainable_params_lora(run_dir: Path) -> Optional[int]:
@@ -101,10 +105,6 @@ def trainable_params_lora(run_dir: Path) -> Optional[int]:
     - Otherwise, return None (we can extend to 'load model and count' if desired).
     """
     lw_dir = run_dir / "lora_weights"
-    if lw_dir.exists():
-        pts = sorted(lw_dir.glob("*.pt"))
-        if pts:
-            sd = _load_json  # type: ignore
     # Actually these .pt are torch state dicts; load via torch if available.
     try:
         import torch  # type: ignore
@@ -118,6 +118,66 @@ def trainable_params_lora(run_dir: Path) -> Optional[int]:
             if isinstance(state, dict):
                 return int(sum(int(v.numel()) for v in state.values() if hasattr(v, "numel")))
     return None
+
+
+def trainable_params_lora_by_loading_model(run_dir: Path) -> Optional[int]:
+    """
+    Exact LoRA trainable parameter count by loading the base model and injecting LoRA,
+    then using lora_experiment/lora_layers.py counting.
+
+    This is slower than reading lora_weights/*.pt, but works even if those weights were not saved.
+    """
+    cfg_path = Path(__file__).parent.parent.parent / "configs" / "diffusion" / "inference" / "256px.py"
+    try:
+        import torch  # type: ignore
+        from mmengine.config import Config  # type: ignore
+        from opensora.utils.misc import to_torch_dtype
+        from opensora.utils.sampling import prepare_models
+
+        # LoRA helpers (repo local)
+        from lora_experiment.lora_layers import inject_lora_into_mmdit, count_lora_parameters
+    except Exception:
+        return None
+
+    config_path = run_dir / "config.json"
+    if not config_path.exists():
+        return None
+    exp_cfg = _load_json(config_path)
+    if not isinstance(exp_cfg, dict):
+        return None
+
+    # Extract LoRA settings from our config.json format
+    lora_rank = _get(exp_cfg, "lora.rank") or exp_cfg.get("lora_rank") or exp_cfg.get("rank")
+    lora_alpha = _get(exp_cfg, "lora.alpha") or exp_cfg.get("lora_alpha") or exp_cfg.get("alpha")
+    target_mlp = bool(_get(exp_cfg, "lora.target_mlp") or exp_cfg.get("target_mlp") or False)
+    dtype_str = exp_cfg.get("dtype", "bf16")
+
+    if not isinstance(lora_rank, int):
+        return None
+    if not isinstance(lora_alpha, int):
+        # alpha can be float in some runs; still fine
+        if isinstance(lora_alpha, (int, float)):
+            lora_alpha = int(lora_alpha)
+        else:
+            lora_alpha = lora_rank * 2
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = to_torch_dtype(dtype_str)
+    cfg = Config.fromfile(str(cfg_path))
+    model, *_ = prepare_models(cfg, device, dtype, offload_model=False)
+
+    inject_lora_into_mmdit(
+        model,
+        rank=lora_rank,
+        alpha=lora_alpha,
+        dropout=0.0,
+        target_modules=["qkv", "proj"],
+        target_blocks="all",
+        target_mlp=target_mlp,
+    )
+    counts = count_lora_parameters(model)
+    # counts["lora"] is number of LoRA parameters
+    return int(counts.get("lora")) if isinstance(counts, dict) and isinstance(counts.get("lora"), int) else None
 
 
 def load_timing_summary_flexible(run_dir: Path) -> Dict[str, Any]:
@@ -220,6 +280,11 @@ def classify_run(config: Dict[str, Any], run_dir: Path) -> str:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--runs", nargs="+", required=True, help="Run directories to summarize.")
+    p.add_argument(
+        "--compute-lora-by-loading-model",
+        action="store_true",
+        help="If LoRA params cannot be inferred from lora_weights/*.pt, load model+inject LoRA to count params (slower).",
+    )
     args = p.parse_args()
 
     rows = []
@@ -250,6 +315,8 @@ def main() -> None:
             trainable = trainable_params_delta_b(config)
         elif kind == "lora":
             trainable = trainable_params_lora(rd)
+            if trainable is None and args.compute_lora_by_loading_model:
+                trainable = trainable_params_lora_by_loading_model(rd)
 
         rows.append(
             {
