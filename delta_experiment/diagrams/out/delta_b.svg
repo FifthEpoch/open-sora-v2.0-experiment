@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480">
+  <defs>
+    <style>
+      .box { fill: #ffffff; stroke: #111111; stroke-width: 2; }
+      .label { font-family: "Times New Roman", "DejaVu Serif", serif; font-size: 18px; fill: #111111; }
+      .small { font-size: 14px; fill: #111111; }
+      .muted { fill: #555555; }
+      .accentText { fill: #1f5cff; }
+      .arrow { stroke: #111111; fill: none; stroke-width: 2; }
+      .arrowAccent { stroke: #1f5cff; fill: none; stroke-width: 2.5; }
+    </style>
+    <marker id="arrowHead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#111111"/>
+    </marker>
+    <marker id="arrowHeadAccent" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#1f5cff"/>
+    </marker>
+  </defs>
+
+  <text x="30" y="40" class="label">Option B (δ-TTA): inject grouped per-layer δ offsets into modulation</text>
+
+  <!-- Minimal pipeline (frozen blocks) -->
+  <rect x="40" y="110" width="160" height="60" class="box"/>
+  <text x="55" y="140" class="label">x_cond</text>
+  <text x="55" y="160" class="small muted">frames 0–32</text>
+
+  <rect x="40" y="190" width="160" height="60" class="box"/>
+  <text x="55" y="225" class="label">prompt</text>
+
+  <rect x="230" y="110" width="170" height="60" class="box"/>
+  <text x="245" y="140" class="label">VAE Encoder</text>
+  <text x="245" y="160" class="small muted">FROZEN</text>
+
+  <rect x="230" y="190" width="170" height="60" class="box"/>
+  <text x="245" y="220" class="label">Text Encoder</text>
+  <text x="245" y="240" class="small muted">FROZEN</text>
+
+  <path d="M200 140 L230 140" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M200 220 L230 220" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Sampling loop -->
+  <rect x="430" y="90" width="520" height="220" class="box"/>
+  <text x="445" y="120" class="label">Diffusion sampling loop (t = T…0)</text>
+  <text x="445" y="140" class="small muted">FROZEN</text>
+
+  <!-- Denoiser shown as a frozen stack -->
+  <rect x="455" y="155" width="250" height="135" class="box"/>
+  <text x="470" y="185" class="label">Denoiser blocks</text>
+  <text x="470" y="205" class="small muted">FROZEN</text>
+  <text x="470" y="232" class="small muted">vec → AdaLN modulation</text>
+  <!-- draw 6 small layers -->
+  <rect x="630" y="175" width="55" height="15" class="box"/>
+  <rect x="630" y="195" width="55" height="15" class="box"/>
+  <rect x="630" y="215" width="55" height="15" class="box"/>
+  <rect x="630" y="235" width="55" height="15" class="box"/>
+  <rect x="630" y="255" width="55" height="15" class="box"/>
+  <rect x="630" y="275" width="55" height="15" class="box"/>
+
+  <!-- Trainable delta group stack -->
+  <rect x="740" y="145" width="210" height="85" class="box" style="stroke:#1f5cff;stroke-width:2.5"/>
+  <text x="755" y="175" class="label accentText">{δ_g}</text>
+  <text x="800" y="175" class="small accentText">TRAINABLE</text>
+  <text x="755" y="198" class="small accentText">δ_1  δ_2  δ_3  δ_4</text>
+  <text x="755" y="220" class="small muted">grouped by depth</text>
+
+  <!-- Grouped arrows into subsets of blocks -->
+  <path d="M845 230 L685 182" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M845 230 L685 202" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M845 230 L685 232" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M845 230 L685 252" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M845 230 L685 272" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M845 230 L685 292" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <text x="720" y="310" class="small accentText">apply at modulation: vec_i' = vec + δ_group(i)</text>
+
+  <!-- Output + decode -->
+  <rect x="980" y="110" width="170" height="60" class="box"/>
+  <text x="995" y="140" class="label">VAE Decoder</text>
+  <text x="995" y="160" class="small muted">FROZEN</text>
+
+  <rect x="980" y="190" width="170" height="60" class="box"/>
+  <text x="995" y="220" class="label">x_out</text>
+  <text x="995" y="240" class="small muted">frames 0–64</text>
+
+  <path d="M950 200 L980 140" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M1065 170 L1065 190" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- TTA note -->
+  <rect x="40" y="330" width="720" height="110" class="box"/>
+  <text x="55" y="360" class="label">TTA (per video)</text>
+  <text x="55" y="388" class="small">• optimize {δ_g} only; backbone frozen</text>
+  <text x="55" y="410" class="small">• K gradient steps</text>
+  <text x="55" y="432" class="small">• loss uses only frames 0–32</text>
+</svg>
+

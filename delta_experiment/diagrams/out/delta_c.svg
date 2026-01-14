@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480">
+  <defs>
+    <style>
+      .box { fill: #ffffff; stroke: #111111; stroke-width: 2; }
+      .label { font-family: "Times New Roman", "DejaVu Serif", serif; font-size: 18px; fill: #111111; }
+      .small { font-size: 14px; fill: #111111; }
+      .muted { fill: #555555; }
+      .accentText { fill: #1f5cff; }
+      .arrow { stroke: #111111; fill: none; stroke-width: 2; }
+      .arrowAccent { stroke: #1f5cff; fill: none; stroke-width: 2.5; }
+    </style>
+    <marker id="arrowHead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#111111"/>
+    </marker>
+    <marker id="arrowHeadAccent" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#1f5cff"/>
+    </marker>
+  </defs>
+
+  <text x="30" y="40" class="label">Option C (δ-TTA): add a trainable output correction to v_pred</text>
+
+  <!-- Minimal frozen pipeline -->
+  <rect x="40" y="110" width="160" height="60" class="box"/>
+  <text x="55" y="140" class="label">x_cond</text>
+  <text x="55" y="160" class="small muted">frames 0–32</text>
+
+  <rect x="40" y="190" width="160" height="60" class="box"/>
+  <text x="55" y="225" class="label">prompt</text>
+
+  <rect x="230" y="110" width="170" height="60" class="box"/>
+  <text x="245" y="140" class="label">VAE Encoder</text>
+  <text x="245" y="160" class="small muted">FROZEN</text>
+
+  <rect x="230" y="190" width="170" height="60" class="box"/>
+  <text x="245" y="220" class="label">Text Encoder</text>
+  <text x="245" y="240" class="small muted">FROZEN</text>
+
+  <path d="M200 140 L230 140" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M200 220 L230 220" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <rect x="430" y="90" width="520" height="220" class="box"/>
+  <text x="445" y="120" class="label">Diffusion sampling loop (t = T…0)</text>
+  <text x="445" y="140" class="small muted">FROZEN</text>
+
+  <rect x="455" y="155" width="290" height="135" class="box"/>
+  <text x="470" y="185" class="label">Denoiser (MMDiT)</text>
+  <text x="470" y="205" class="small muted">FROZEN</text>
+  <text x="470" y="232" class="small muted">vec → AdaLN modulation</text>
+
+  <rect x="770" y="200" width="90" height="40" class="box"/>
+  <text x="785" y="227" class="small">v_pred</text>
+  <path d="M745 222 L770 222" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- Trainable output correction -->
+  <rect x="540" y="155" width="160" height="55" class="box" style="stroke:#1f5cff;stroke-width:2.5"/>
+  <text x="555" y="185" class="label accentText">δ_out</text>
+  <text x="620" y="185" class="small accentText">TRAINABLE</text>
+
+  <rect x="710" y="155" width="70" height="55" class="box" style="stroke:#1f5cff;stroke-width:2.5"/>
+  <text x="726" y="188" class="label accentText">P(·)</text>
+
+  <path d="M700 182 L710 182" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+
+  <circle cx="900" cy="222" r="13" fill="#ffffff" stroke="#1f5cff" stroke-width="2.5"/>
+  <text x="896" y="229" class="label accentText">+</text>
+  <text x="922" y="227" class="small accentText">v_pred' = v_pred + Δv</text>
+
+  <path d="M860 222 L887 222" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <path d="M780 182 C820 182, 860 195, 900 209" class="arrowAccent" marker-end="url(#arrowHeadAccent)"/>
+  <text x="835" y="178" class="small accentText">Δv</text>
+
+  <!-- Decode -->
+  <rect x="980" y="110" width="170" height="60" class="box"/>
+  <text x="995" y="140" class="label">VAE Decoder</text>
+  <text x="995" y="160" class="small muted">FROZEN</text>
+
+  <rect x="980" y="190" width="170" height="60" class="box"/>
+  <text x="995" y="220" class="label">x_out</text>
+  <text x="995" y="240" class="small muted">frames 0–64</text>
+
+  <path d="M913 222 L980 140" class="arrow" marker-end="url(#arrowHead)"/>
+  <path d="M1065 170 L1065 190" class="arrow" marker-end="url(#arrowHead)"/>
+
+  <!-- TTA note -->
+  <rect x="40" y="330" width="840" height="110" class="box"/>
+  <text x="55" y="360" class="label">TTA (per video)</text>
+  <text x="55" y="388" class="small">• optimize δ_out (and tiny P) only; backbone frozen</text>
+  <text x="55" y="410" class="small">• K gradient steps; loss uses only frames 0–32</text>
+  <text x="55" y="432" class="small">• regularize ||δ_out|| for stability</text>
+</svg>
+
