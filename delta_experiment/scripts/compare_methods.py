@@ -62,6 +62,17 @@ def main():
     parser = argparse.ArgumentParser(description="Compare Baseline vs Best-LoRA vs δ methods")
     parser.add_argument("--baseline_eval_dir", type=str, required=True, help="Evaluation dir containing baseline metrics (summary.json)")
     parser.add_argument("--bestlora_eval_dir", type=str, required=True, help="Evaluation dir containing best LoRA metrics (summary.json)")
+    parser.add_argument(
+        "--bestlora_side",
+        type=str,
+        choices=["baseline", "lora"],
+        default="baseline",
+        help=(
+            "Which side of bestlora_eval_dir to report as 'best_lora'. "
+            "Use 'baseline' for legacy delta_experiment evaluate_delta outputs (best LoRA stored under baseline_*), "
+            "or 'lora' when bestlora_eval_dir comes from evaluate.py (best LoRA stored under lora_*)."
+        ),
+    )
     parser.add_argument("--delta_a_eval_dir", type=str, required=False)
     parser.add_argument("--delta_b_eval_dir", type=str, required=False)
     parser.add_argument("--delta_c_eval_dir", type=str, required=False)
@@ -99,10 +110,10 @@ def main():
             "time_generate": fmt_seconds(timing_mean_seconds(timing, "generate")),
         }
 
-    # baseline_eval_dir is a baseline_vs_delta summary -> baseline_* refers to true baseline
+    # baseline_eval_dir: baseline_* refers to true baseline
     rows.append(row_from(baseline, "baseline", side="baseline", timing=baseline_timing))
-    # bestlora_eval_dir is a bestlora_vs_delta summary -> baseline_* refers to best LoRA
-    rows.append(row_from(bestlora, "best_lora", side="baseline", timing=bestlora_timing))
+    # bestlora_eval_dir: configurable which side is "best_lora" (legacy vs benchmark usage)
+    rows.append(row_from(bestlora, "best_lora", side=args.bestlora_side, timing=bestlora_timing))
 
     for key, label in [
         ("delta_a_eval_dir", "delta_A"),

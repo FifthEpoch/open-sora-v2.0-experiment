@@ -64,6 +64,9 @@ from lora_layers import (
     reset_lora_weights,
 )
 
+# Reuse δ-experiment selection helper so we can exactly match a reference results.json video list/order.
+from delta_experiment.scripts.common import VideoSelectionConfig, select_videos
+
 
 def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.DataFrame:
     """
@@ -378,22 +381,32 @@ def run_tta_experiment(args):
     dtype = to_torch_dtype(args.dtype)
     set_seed(args.seed)
     
-    # Load metadata
+    # Load/select videos (optionally reuse a reference results.json list for exact fairness)
     metadata_path = Path(args.data_dir) / "metadata.csv"
     if not metadata_path.exists():
         raise FileNotFoundError(f"Metadata not found at {metadata_path}")
-    
-    df = pd.read_csv(metadata_path)
-    print(f"Found {len(df)} videos in dataset")
-    
-    if args.max_videos:
-        if args.stratified and 'class' in df.columns:
-            # Stratified sampling: select proportionally from each class
-            df = stratified_sample(df, args.max_videos, seed=args.seed)
-            print(f"Stratified sample: {args.max_videos} videos from {df['class'].nunique()} classes")
-        else:
-            df = df.head(args.max_videos)
-            print(f"Processing first {args.max_videos} videos")
+
+    if args.reference_results_json:
+        ref = Path(args.reference_results_json)
+        cfg_sel = VideoSelectionConfig(
+            max_videos=int(args.max_videos) if args.max_videos else 10**9,
+            stratified=bool(args.stratified),
+            seed=int(args.seed),
+        )
+        df = select_videos(metadata_path, cfg_sel, reference_results_json=ref)
+        print(f"Selected {len(df)} videos from reference list: {ref}")
+    else:
+        df = pd.read_csv(metadata_path)
+        print(f"Found {len(df)} videos in dataset")
+
+        if args.max_videos:
+            if args.stratified and "class" in df.columns:
+                # Stratified sampling: select proportionally from each class
+                df = stratified_sample(df, args.max_videos, seed=args.seed)
+                print(f"Stratified sample: {args.max_videos} videos from {df['class'].nunique()} classes")
+            else:
+                df = df.head(args.max_videos)
+                print(f"Processing first {args.max_videos} videos")
     
     # Setup output directory
     output_dir = Path(args.output_dir)
@@ -442,6 +455,9 @@ def run_tta_experiment(args):
             "guidance_img": args.guidance_img,
         },
         "seed": args.seed,
+        "max_videos": args.max_videos,
+        "stratified": args.stratified,
+        "reference_results_json": args.reference_results_json,
         "dtype": args.dtype,
     }
     
@@ -763,6 +779,12 @@ def main():
                         help="Restart from beginning (ignore checkpoint)")
     parser.add_argument("--save-lora-weights", action="store_true",
                         help="Save LoRA weights for each video")
+    parser.add_argument(
+        "--reference-results-json",
+        type=str,
+        default=None,
+        help="Optional: path to results.json to reuse the exact same video list/order (recommended).",
+    )
     
     args = parser.parse_args()
     
