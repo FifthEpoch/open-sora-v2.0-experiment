@@ -127,15 +127,20 @@ def trainable_params_lora_by_loading_model(run_dir: Path) -> Optional[int]:
 
     This is slower than reading lora_weights/*.pt, but works even if those weights were not saved.
     """
-    cfg_path = Path(__file__).parent.parent.parent / "configs" / "diffusion" / "inference" / "256px.py"
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg_path = repo_root / "configs" / "diffusion" / "inference" / "256px.py"
     try:
+        import sys
+
         import torch  # type: ignore
         from mmengine.config import Config  # type: ignore
         from opensora.utils.misc import to_torch_dtype
         from opensora.utils.sampling import prepare_models
 
-        # LoRA helpers (repo local)
-        from lora_experiment.lora_layers import inject_lora_into_mmdit, count_lora_parameters
+        # LoRA helpers (repo local). Note: lora_experiment/ is not a package (no __init__.py),
+        # so we import it the same way run_lora_tta.py does: add the directory to sys.path.
+        sys.path.insert(0, str(repo_root / "lora_experiment"))
+        import lora_layers  # type: ignore
     except Exception:
         return None
 
@@ -166,7 +171,7 @@ def trainable_params_lora_by_loading_model(run_dir: Path) -> Optional[int]:
     cfg = Config.fromfile(str(cfg_path))
     model, *_ = prepare_models(cfg, device, dtype, offload_model=False)
 
-    inject_lora_into_mmdit(
+    lora_layers.inject_lora_into_mmdit(
         model,
         rank=lora_rank,
         alpha=lora_alpha,
@@ -175,7 +180,7 @@ def trainable_params_lora_by_loading_model(run_dir: Path) -> Optional[int]:
         target_blocks="all",
         target_mlp=target_mlp,
     )
-    counts = count_lora_parameters(model)
+    counts = lora_layers.count_lora_parameters(model)
     # counts["lora"] is number of LoRA parameters
     return int(counts.get("lora")) if isinstance(counts, dict) and isinstance(counts.get("lora"), int) else None
 
