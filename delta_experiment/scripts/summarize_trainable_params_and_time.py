@@ -107,7 +107,7 @@ def trainable_params_lora(run_dir: Path) -> Optional[int]:
             sd = _load_json  # type: ignore
     # Actually these .pt are torch state dicts; load via torch if available.
     try:
-        import torch
+        import torch  # type: ignore
     except Exception:
         torch = None  # type: ignore
 
@@ -118,6 +118,81 @@ def trainable_params_lora(run_dir: Path) -> Optional[int]:
             if isinstance(state, dict):
                 return int(sum(int(v.numel()) for v in state.values() if hasattr(v, "numel")))
     return None
+
+
+def load_timing_summary_flexible(run_dir: Path) -> Dict[str, Any]:
+    """
+    Backward-compatible timing loader:
+    - Prefer timing_summary.json (new format)
+    - Else if timing_per_video.jsonl exists, compute summary using experiment_timing.summarize
+    - Else return {} (caller can fall back to metrics_summary.json or results.json)
+    """
+    timing_path = run_dir / "timing_summary.json"
+    if timing_path.exists():
+        d = _load_json(timing_path)
+        return d if isinstance(d, dict) else {}
+
+    per_video = run_dir / "timing_per_video.jsonl"
+    if per_video.exists():
+        try:
+            # Local import (repo root module)
+            from experiment_timing import summarize  # type: ignore
+        except Exception:
+            return {}
+
+        records = []
+        with per_video.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except Exception:
+                    continue
+        out = summarize(records)
+        return out if isinstance(out, dict) else {}
+
+    return {}
+
+
+def load_train_gen_times_fallback(run_dir: Path) -> Dict[str, Optional[float]]:
+    """
+    Backward-compatible loader for older runs that only wrote metrics_summary.json or results.json.
+    Returns mean seconds per video for training and inference, if available.
+    """
+    # 1) metrics_summary.json (our scripts often include avg_train_time / avg_gen_time)
+    ms = run_dir / "metrics_summary.json"
+    if ms.exists():
+        d = _load_json(ms)
+        if isinstance(d, dict):
+            # Common keys across scripts
+            for train_k, gen_k in [
+                ("avg_train_time", "avg_gen_time"),
+                ("train_time_mean", "gen_time_mean"),
+            ]:
+                tr = d.get(train_k)
+                ge = d.get(gen_k)
+                if isinstance(tr, (int, float)) or isinstance(ge, (int, float)):
+                    return {
+                        "train_mean_s": float(tr) if isinstance(tr, (int, float)) else None,
+                        "infer_mean_s": float(ge) if isinstance(ge, (int, float)) else None,
+                    }
+
+    # 2) results.json (per-video entries with train_time/gen_time)
+    rj = run_dir / "results.json"
+    if rj.exists():
+        d = _load_json(rj)
+        if isinstance(d, list) and d:
+            ok = [it for it in d if isinstance(it, dict) and it.get("success", False)]
+            if ok:
+                trains = [float(it["train_time"]) for it in ok if isinstance(it.get("train_time"), (int, float))]
+                gens = [float(it["gen_time"]) for it in ok if isinstance(it.get("gen_time"), (int, float))]
+                train_mean = sum(trains) / len(trains) if trains else None
+                gen_mean = sum(gens) / len(gens) if gens else None
+                return {"train_mean_s": train_mean, "infer_mean_s": gen_mean}
+
+    return {"train_mean_s": None, "infer_mean_s": None}
 
 
 def classify_run(config: Dict[str, Any], run_dir: Path) -> str:
@@ -150,20 +225,23 @@ def main() -> None:
     rows = []
     for rd in [Path(x) for x in args.runs]:
         config_path = rd / "config.json"
-        timing_path = rd / "timing_summary.json"
         if not config_path.exists():
             raise FileNotFoundError(f"Missing config.json: {config_path}")
-        if not timing_path.exists():
-            raise FileNotFoundError(f"Missing timing_summary.json: {timing_path}")
 
         config = _load_json(config_path)
-        timing = _load_json(timing_path)
+        timing = load_timing_summary_flexible(rd)
 
         kind = classify_run(config if isinstance(config, dict) else {}, rd)
-        train_s = _phase_mean_s(timing, "tta_train")
-        infer_s = _phase_mean_s(timing, "generate")
-        encode_s = _phase_mean_s(timing, "encode_video")
-        embed_s = _phase_mean_s(timing, "embed_text")
+        train_s = _phase_mean_s(timing, "tta_train") if timing else None
+        infer_s = _phase_mean_s(timing, "generate") if timing else None
+        encode_s = _phase_mean_s(timing, "encode_video") if timing else None
+        embed_s = _phase_mean_s(timing, "embed_text") if timing else None
+
+        # Backward compatibility: if we still don't have train/gen from timing, try metrics_summary.json/results.json
+        if train_s is None and infer_s is None:
+            fb = load_train_gen_times_fallback(rd)
+            train_s = fb.get("train_mean_s")
+            infer_s = fb.get("infer_mean_s")
 
         trainable = None
         if kind == "delta_a":
