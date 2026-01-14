@@ -35,6 +35,10 @@ from typing import Any, Dict, Optional
 
 
 DEFAULT_HIDDEN_SIZE = 3072  # Open-Sora v2.0 256px config (vec-space dim)
+DEFAULT_MLP_RATIO = 4.0
+DEFAULT_DEPTH_DOUBLE = 19
+DEFAULT_DEPTH_SINGLE = 38
+DEFAULT_FUSED_QKV = False  # matches configs/diffusion/inference/256px.py in this repo
 
 
 def _load_json(path: Path) -> Any:
@@ -118,6 +122,107 @@ def trainable_params_lora(run_dir: Path) -> Optional[int]:
             if isinstance(state, dict):
                 return int(sum(int(v.numel()) for v in state.values() if hasattr(v, "numel")))
     return None
+
+
+def _load_mmengine_config_256px() -> Dict[str, Any]:
+    """
+    Best-effort load of the canonical 256px inference config to read model depth/hidden_size.
+    If mmengine isn't available (e.g., local lint), fall back to constants.
+    """
+    cfg = {
+        "hidden_size": DEFAULT_HIDDEN_SIZE,
+        "mlp_ratio": DEFAULT_MLP_RATIO,
+        "depth": DEFAULT_DEPTH_DOUBLE,
+        "depth_single_blocks": DEFAULT_DEPTH_SINGLE,
+        "fused_qkv": DEFAULT_FUSED_QKV,
+    }
+    try:
+        from mmengine.config import Config  # type: ignore
+
+        repo_root = Path(__file__).resolve().parents[2]
+        cfg_path = repo_root / "configs" / "diffusion" / "inference" / "256px.py"
+        if cfg_path.exists():
+            c = Config.fromfile(str(cfg_path))
+            model = getattr(c, "model", None)
+            if isinstance(model, dict):
+                for k in ["hidden_size", "mlp_ratio", "depth", "depth_single_blocks", "fused_qkv"]:
+                    v = model.get(k)
+                    if isinstance(v, (int, float, bool)):
+                        cfg[k] = v
+    except Exception:
+        pass
+    return cfg
+
+
+def trainable_params_lora_analytic(run_config: Dict[str, Any]) -> Optional[int]:
+    """
+    Analytic LoRA parameter count matching *this repo's* LoRA injection implementation.
+
+    This is used when lora_weights/*.pt are not present (older runs or saving disabled).
+    It uses model architecture fields from configs/diffusion/inference/256px.py (best-effort).
+    """
+    r = _get(run_config, "lora.rank") or run_config.get("lora_rank") or run_config.get("rank")
+    if not isinstance(r, int) or r <= 0:
+        return None
+
+    target_mlp = bool(_get(run_config, "lora.target_mlp") or run_config.get("target_mlp") or False)
+
+    mcfg = _load_mmengine_config_256px()
+    d = int(mcfg["hidden_size"])
+    mlp_ratio = float(mcfg["mlp_ratio"])
+    depth_double = int(mcfg["depth"])
+    depth_single = int(mcfg["depth_single_blocks"])
+    fused_qkv = bool(mcfg["fused_qkv"])
+
+    mlp_hidden = int(d * mlp_ratio)
+
+    # --- Double-stream blocks ---
+    # LoRA injection in lora_experiment/lora_layers.py:
+    # - inject_lora_into_self_attention(... target_modules=["qkv","proj"])
+    # - For fused_qkv=False attention, current implementation only injects "proj" (q_proj/k_proj/v_proj are NOT targeted).
+    # - Always two attentions per double block: img_attn and txt_attn.
+    #
+    # Attention params per attention:
+    #   - fused_qkv=True: LoRAFusedQKV adds Q/K/V adapters: 3 * (r*d + d*r) = 6*r*d
+    #                    + proj LoRALinear: 2*r*d
+    #                    => 8*r*d
+    #   - fused_qkv=False: proj only => 2*r*d
+    if fused_qkv:
+        attn_per = 8 * r * d
+    else:
+        attn_per = 2 * r * d
+    double_attn_total = depth_double * (2 * attn_per)  # img + txt
+
+    # Optional MLP LoRA in double blocks when --target-mlp is enabled:
+    # - img_mlp: [Linear(d->mlp_hidden), GELU, Linear(mlp_hidden->d)]
+    # - txt_mlp: same
+    # Each Linear adds r*(in+out).
+    double_mlp_total = 0
+    if target_mlp:
+        per_stream_mlp = r * (d + mlp_hidden) + r * (mlp_hidden + d)  # two linears
+        double_mlp_total = depth_double * 2 * per_stream_mlp  # img + txt
+
+    # --- Single-stream blocks ---
+    # lora_layers.py wraps:
+    # - fused_qkv=True: linear1 and linear2
+    # - fused_qkv=False: q_proj, k_proj, v_mlp, linear2
+    single_total = 0
+    if fused_qkv:
+        # linear1: d -> (3d + mlp_hidden)
+        single_total += depth_single * (r * (d + (3 * d + mlp_hidden)))
+        # linear2: (d + mlp_hidden) -> d
+        single_total += depth_single * (r * ((d + mlp_hidden) + d))
+    else:
+        # q_proj: d -> d
+        single_total += depth_single * (r * (d + d))
+        # k_proj: d -> d
+        single_total += depth_single * (r * (d + d))
+        # v_mlp: d -> (d + mlp_hidden)
+        single_total += depth_single * (r * (d + (d + mlp_hidden)))
+        # linear2: (d + mlp_hidden) -> d
+        single_total += depth_single * (r * ((d + mlp_hidden) + d))
+
+    return int(double_attn_total + double_mlp_total + single_total)
 
 
 def trainable_params_lora_by_loading_model(run_dir: Path) -> Optional[int]:
@@ -320,6 +425,9 @@ def main() -> None:
             trainable = trainable_params_delta_b(config)
         elif kind == "lora":
             trainable = trainable_params_lora(rd)
+            if trainable is None:
+                # Analytic fallback when lora_weights/*.pt are not present.
+                trainable = trainable_params_lora_analytic(config if isinstance(config, dict) else {})
             if trainable is None and args.compute_lora_by_loading_model:
                 trainable = trainable_params_lora_by_loading_model(rd)
 
