@@ -48,6 +48,7 @@ OUT_DIR="${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_a_global_100vi
 
 # Reuse the exact δ-A hyperparams from the prior run config.json.
 CFG_SRC="${CFG_SRC:-${PROJECT_ROOT}/delta_experiment/results/delta_a_global/config.json}"
+export CFG_SRC
 if [ ! -f "${CFG_SRC}" ]; then
   echo "ERROR: δ-A source config not found: ${CFG_SRC}"
   echo "Set CFG_SRC to an existing delta_a_global/config.json path."
