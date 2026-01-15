@@ -44,7 +44,6 @@ mkdir -p "${PROJECT_ROOT}/delta_experiment/logs"
 
 DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
 BASELINE_RESULTS_JSON="${PROJECT_ROOT}/lora_experiment/results/baseline/results.json"
-OUT_DIR="${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_b_steps50_lr3e-3_l21e-4_100videos"
 
 # δ-B LPIPS winner (from your sweep summary)
 DELTA_STEPS="${DELTA_STEPS:-50}"
@@ -55,6 +54,8 @@ WEIGHT_DECAY="${WEIGHT_DECAY:-0.0}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-1.0}"
 GROUPS_DOUBLE="${GROUPS_DOUBLE:-4}"
 GROUPS_SINGLE="${GROUPS_SINGLE:-4}"
+
+OUT_DIR="${OUT_DIR:-${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_b_steps${DELTA_STEPS}_lr${DELTA_LR}_l2${DELTA_L2}_g${GROUPS_DOUBLE}_${GROUPS_SINGLE}_100videos}"
 
 INFERENCE_STEPS="${INFERENCE_STEPS:-25}"
 GUIDANCE="${GUIDANCE:-7.5}"

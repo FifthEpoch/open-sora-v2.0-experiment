@@ -45,9 +45,10 @@ mkdir -p "${PROJECT_ROOT}/delta_experiment/logs"
 GT_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
 BASELINE_DIR="${PROJECT_ROOT}/lora_experiment/results/baseline"
 
-LORA_DIR="${PROJECT_ROOT}/lora_experiment/results/benchmark_lora_r8_lr2e-4_20steps_100videos"
-DELTA_A_DIR="${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_a_global_100videos"
-DELTA_B_DIR="${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_b_steps50_lr3e-3_l21e-4_100videos"
+LORA_DIR="${LORA_DIR:-${PROJECT_ROOT}/lora_experiment/results/benchmark_lora_r8_lr2e-4_20steps_100videos}"
+DELTA_A_DIR="${DELTA_A_DIR:-${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_a_global_100videos}"
+DELTA_B_DIR="${DELTA_B_DIR:-${PROJECT_ROOT}/delta_experiment/results/benchmark_delta_b_steps50_lr3e-3_l21e-4_100videos}"
+OUTPUT_JSON="${OUTPUT_JSON:-${PROJECT_ROOT}/delta_experiment/results/benchmark_comparison.json}"
 
 echo "Evaluating LoRA benchmark..."
 python ${PROJECT_ROOT}/lora_experiment/scripts/evaluate.py \
@@ -81,7 +82,7 @@ python ${PROJECT_ROOT}/delta_experiment/scripts/compare_methods.py \
   --bestlora_run_dir ${LORA_DIR} \
   --delta_a_run_dir ${DELTA_A_DIR} \
   --delta_b_run_dir ${DELTA_B_DIR} \
-  --output ${PROJECT_ROOT}/delta_experiment/results/benchmark_comparison.json
+  --output ${OUTPUT_JSON}
 
 echo "=============================================================================="
 echo "Done: Benchmark evaluation"
