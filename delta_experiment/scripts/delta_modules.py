@@ -97,6 +97,56 @@ def forward_with_delta_groups(
     return img
 
 
+def forward_with_delta_groups_time2(
+    model,
+    img: Tensor,
+    img_ids: Tensor,
+    txt: Tensor,
+    txt_ids: Tensor,
+    timesteps: Tensor,
+    y_vec: Tensor,
+    cond: Tensor,
+    guidance: Tensor | None,
+    delta_double_groups_0: nn.ParameterList,
+    delta_double_groups_1: nn.ParameterList,
+    delta_single_groups_0: nn.ParameterList,
+    delta_single_groups_1: nn.ParameterList,
+    delta_final_0: nn.Parameter,
+    delta_final_1: nn.Parameter,
+    n_groups_double: int,
+    n_groups_single: int,
+    **kwargs,
+) -> Tensor:
+    """
+    δ-B (time2): timestep-dependent vec offsets with 2 vectors per group.
+
+    We use: vec'(t) = vec + δ0 + s(t) * δ1
+    where s(t) is a scalar derived from the current diffusion timestep (broadcast per batch).
+    """
+
+    img, txt, vec, pe = model.prepare_block_inputs(img, img_ids, txt, txt_ids, timesteps, y_vec, cond, guidance)
+
+    # timesteps: [B] float/bfloat16
+    s = timesteps.to(vec.dtype)[:, None]  # [B, 1]
+
+    n_double = len(model.double_blocks)
+    for i, block in enumerate(model.double_blocks):
+        g = group_index(i, n_double, n_groups_double)
+        vec_i = vec + delta_double_groups_0[g][None, :] + s * delta_double_groups_1[g][None, :]
+        img, txt = auto_grad_checkpoint(block, img, txt, vec_i, pe)
+
+    img = torch.cat((txt, img), 1)
+    n_single = len(model.single_blocks)
+    for j, block in enumerate(model.single_blocks):
+        g = group_index(j, n_single, n_groups_single)
+        vec_j = vec + delta_single_groups_0[g][None, :] + s * delta_single_groups_1[g][None, :]
+        img = auto_grad_checkpoint(block, img, vec_j, pe)
+
+    img = img[:, txt.shape[1] :, ...]
+    img = model.final_layer(img, vec + delta_final_0[None, :] + s * delta_final_1[None, :])
+    return img
+
+
 class DeltaAWrapper:
     """
     Option A: patch model.prepare_block_inputs so vec is replaced with vec + δ.
