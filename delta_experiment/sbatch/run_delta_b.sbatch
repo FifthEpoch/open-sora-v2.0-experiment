@@ -56,6 +56,12 @@ MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
 
+# Augmentation parameters (TTA only)
+AUG_ENABLED="${AUG_ENABLED:-false}"
+AUG_FLIP="${AUG_FLIP:-true}"
+AUG_ROTATE_DEG="${AUG_ROTATE_DEG:-5}"
+AUG_SPEED_FACTORS="${AUG_SPEED_FACTORS:-0.5,2.0}"
+
 CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_b.py \
   --data-dir ${DATA_DIR} \
   --output-dir ${OUT_DIR} \
@@ -70,6 +76,19 @@ CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_b.py \
 
 if [ "${STRATIFIED}" = "true" ]; then
   CMD="${CMD} --stratified"
+fi
+
+if [ "${AUG_ENABLED}" = "true" ]; then
+  CMD="${CMD} --aug-enabled"
+fi
+if [ "${AUG_FLIP}" = "true" ]; then
+  CMD="${CMD} --aug-flip"
+fi
+if [ -n "${AUG_ROTATE_DEG}" ]; then
+  CMD="${CMD} --aug-rotate-deg ${AUG_ROTATE_DEG}"
+fi
+if [ -n "${AUG_SPEED_FACTORS}" ]; then
+  CMD="${CMD} --aug-speed-factors ${AUG_SPEED_FACTORS}"
 fi
 
 echo "Running: ${CMD}"

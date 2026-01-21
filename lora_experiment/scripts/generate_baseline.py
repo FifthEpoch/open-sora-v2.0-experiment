@@ -91,15 +91,25 @@ def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.Da
     return result.head(n_samples)  # Ensure exact count
 
 
-def load_video_for_conditioning(video_path: str, num_frames: int = 33) -> np.ndarray:
-    """Load video frames for v2v_head conditioning."""
+def load_video_for_conditioning(
+    video_path: str,
+    num_frames: int = 33,
+    target_height: int | None = None,
+    target_width: int | None = None,
+    device: torch.device = "cpu",
+    dtype: torch.dtype = torch.float32,
+) -> torch.Tensor:
+    """Load video frames for v2v_head conditioning and return as a tensor [-1, 1]."""
     import av
+    import cv2
     
     container = av.open(video_path)
     frames = []
     
     for frame in container.decode(video=0):
         img = frame.to_ndarray(format='rgb24')
+        if target_height is not None and target_width is not None:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
         frames.append(img)
         if len(frames) >= num_frames:
             break
@@ -111,27 +121,55 @@ def load_video_for_conditioning(video_path: str, num_frames: int = 33) -> np.nda
         while len(frames) < num_frames:
             frames.append(frames[-1])
     
-    return np.stack(frames[:num_frames], axis=0)
+    # [T, H, W, C] -> [C, T, H, W]
+    frames = np.stack(frames[:num_frames], axis=0)
+    frames = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0
+    pixel_frames = (frames * 2 - 1).unsqueeze(0).to(device, dtype)  # [1, C, T, H, W]
+    return pixel_frames
 
 
-def save_video(video_tensor: torch.Tensor, output_path: str, fps: int = 24):
-    """Save video tensor to file."""
+def save_video(
+    video_tensor: torch.Tensor,
+    output_path: str,
+    fps: int = 24,
+    target_height: int | None = None,
+    target_width: int | None = None,
+):
+    """
+    Save video tensor to mp4 using higher quality settings to avoid blockiness.
+    """
+    import cv2
     import imageio
-    
+
     # video_tensor: [B, C, T, H, W] or [C, T, H, W]
     if video_tensor.dim() == 5:
         video_tensor = video_tensor[0]
-    
+
     # [C, T, H, W] -> [T, H, W, C]
     video = video_tensor.permute(1, 2, 3, 0)
-    
+
     # Clamp and convert to uint8
     video = ((video + 1) / 2).clamp(0, 1)  # [-1, 1] -> [0, 1]
     video = (video * 255).to(torch.uint8).cpu().numpy()
-    
-    # Save
+
+    # Optional resize to match conditioning resolution (e.g., 256x464)
+    if target_height is not None and target_width is not None:
+        resized_frames = []
+        for frame in video:
+            resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+            resized_frames.append(resized)
+        video = resized_frames
+
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    imageio.mimwrite(output_path, video, fps=fps)
+    imageio.mimwrite(
+        output_path,
+        video,
+        fps=fps,
+        codec="libx264",
+        quality=9,
+        bitrate="4M",
+        macro_block_size=None,
+    )
 
 
 def run_baseline_generation(args):
@@ -261,6 +299,12 @@ def run_baseline_generation(args):
             pt = PhaseTimer(phases)
             total_start = now_s()
             
+            # Load conditioning frames for stitching later
+            pixel_frames = load_video_for_conditioning(
+                video_path, num_frames=33, target_height=256, target_width=464,
+                device=device, dtype=dtype
+            )
+
             # Generate using the API function
             with pt.phase("generate"):
                 with torch.inference_mode():
@@ -279,7 +323,16 @@ def run_baseline_generation(args):
             # Save output video
             output_path = videos_dir / f"{video_name}_baseline.mp4"
             with pt.phase("save_video"):
-                save_video(output, str(output_path), fps=24)
+                # Stitch original conditioning frames back into the output
+                output[:, :, :33, :, :] = pixel_frames.to(output.device, output.dtype)
+
+                save_video(
+                    output,
+                    str(output_path),
+                    fps=24,
+                    target_height=256,
+                    target_width=464,
+                )
 
             total_s = now_s() - total_start
             

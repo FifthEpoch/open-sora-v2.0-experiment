@@ -9,7 +9,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -187,16 +187,22 @@ def load_video_for_training(
     num_frames: int,
     device: torch.device,
     dtype: torch.dtype,
+    target_height: int | None = None,
+    target_width: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Load a video and return (latents, pixel_frames) for the first num_frames.
+    If target_height/width are provided, pixels are resized before encoding.
     """
     import av
+    import cv2
 
     container = av.open(video_path)
     frames = []
     for frame in container.decode(video=0):
         img = frame.to_ndarray(format="rgb24")
+        if target_height is not None and target_width is not None:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
         frames.append(img)
         if len(frames) >= num_frames:
             break
@@ -221,3 +227,148 @@ def load_video_for_training(
     return latents, pixel_frames
 
 
+def make_img_ids_from_time_ids(
+    time_ids: torch.Tensor,
+    h_patches: int,
+    w_patches: int,
+    batch: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """
+    Build img_ids using explicit time indices (supports temporal augmentations).
+    Returns shape [B, T*H*W, 3].
+    """
+    time_ids = time_ids.to(device=device, dtype=dtype)
+    t_len = int(time_ids.shape[0])
+    img_ids = torch.zeros(t_len, h_patches, w_patches, 3, device=device, dtype=dtype)
+    img_ids[..., 0] = time_ids[:, None, None]
+    img_ids[..., 1] = torch.arange(h_patches, device=device, dtype=dtype)[None, :, None]
+    img_ids[..., 2] = torch.arange(w_patches, device=device, dtype=dtype)[None, None, :]
+    img_ids = img_ids.reshape(t_len * h_patches * w_patches, 3).unsqueeze(0)
+    return img_ids.repeat(batch, 1, 1)
+
+
+def _rotate_clip(pixel_frames: torch.Tensor, degrees: float) -> torch.Tensor:
+    import torchvision.transforms.functional as TF
+    from torchvision.transforms.functional import InterpolationMode
+
+    # pixel_frames: [1, C, T, H, W]
+    clip = pixel_frames[0].permute(1, 0, 2, 3)  # [T, C, H, W]
+    rotated = torch.stack(
+        [
+            TF.rotate(
+                frame,
+                degrees,
+                interpolation=InterpolationMode.BILINEAR,
+                expand=False,
+                fill=0.0,
+            )
+            for frame in clip
+        ],
+        dim=0,
+    )
+    return rotated.permute(1, 0, 2, 3).unsqueeze(0)
+
+
+def build_augmented_pixel_variants(
+    pixel_frames: torch.Tensor,
+    *,
+    enable_flip: bool = False,
+    rotate_deg: float = 0.0,
+    speed_factors: Iterable[float] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build augmented pixel variants from a conditioning clip.
+
+    Returns list of dicts with keys: pixel_frames, time_ids, name.
+    """
+    variants: list[dict[str, Any]] = []
+    device = pixel_frames.device
+    t_len = int(pixel_frames.shape[2])
+    base_time = torch.arange(t_len, device=device, dtype=torch.long)
+
+    variants.append({"pixel_frames": pixel_frames, "time_ids": base_time, "name": "orig"})
+
+    if enable_flip:
+        variants.append(
+            {
+                "pixel_frames": pixel_frames.flip(dims=[4]),
+                "time_ids": base_time,
+                "name": "flip_h",
+            }
+        )
+
+    if rotate_deg and rotate_deg > 0:
+        for deg in (-rotate_deg, rotate_deg):
+            variants.append(
+                {
+                    "pixel_frames": _rotate_clip(pixel_frames, deg),
+                    "time_ids": base_time,
+                    "name": f"rotate_{deg:+.1f}",
+                }
+            )
+
+    if speed_factors:
+        for factor in speed_factors:
+            if factor == 1.0:
+                continue
+            if factor > 1.0:
+                stride = max(2, int(round(factor)))
+                idx = torch.arange(0, t_len, step=stride, device=device)
+                variants.append(
+                    {
+                        "pixel_frames": pixel_frames[:, :, idx, :, :],
+                        "time_ids": idx,
+                        "name": f"speed_{stride}x",
+                    }
+                )
+            elif factor < 1.0:
+                repeat = max(2, int(round(1.0 / factor)))
+                idx = torch.arange(t_len, device=device).repeat_interleave(repeat)[:t_len]
+                variants.append(
+                    {
+                        "pixel_frames": pixel_frames[:, :, idx, :, :],
+                        "time_ids": idx,
+                        "name": f"slow_{repeat}x",
+                    }
+                )
+
+    return variants
+
+
+def build_augmented_latent_variants(
+    *,
+    pixel_frames: torch.Tensor,
+    base_latents: torch.Tensor,
+    model_ae,
+    enable_flip: bool = False,
+    rotate_deg: float = 0.0,
+    speed_factors: Iterable[float] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Build augmented latent variants from a conditioning clip.
+
+    Returns list of dicts with keys: latents, time_ids, name.
+    """
+    pixel_variants = build_augmented_pixel_variants(
+        pixel_frames,
+        enable_flip=enable_flip,
+        rotate_deg=rotate_deg,
+        speed_factors=speed_factors,
+    )
+    variants: list[dict[str, Any]] = []
+    for item in pixel_variants:
+        if item["name"] == "orig":
+            latents = base_latents
+        else:
+            with torch.no_grad():
+                latents = model_ae.encode(item["pixel_frames"])
+        variants.append(
+            {
+                "latents": latents,
+                "time_ids": item["time_ids"],
+                "name": item["name"],
+            }
+        )
+    return variants

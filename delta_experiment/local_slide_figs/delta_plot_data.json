@@ -1,0 +1,100 @@
+{
+  "baseline": {
+    "psnr_mean": 15.49,
+    "psnr_std": 3.42,
+    "ssim_mean": 0.4943,
+    "ssim_std": 0.162,
+    "lpips_mean": 0.4105,
+    "lpips_std": 0.1465,
+    "train_s": null,
+    "infer_s": 16.2,
+    "params": null
+  },
+  "methods": [
+    {
+      "name": "LoRA (20 steps)",
+      "psnr_mean": 15.6,
+      "psnr_std": 3.14,
+      "ssim_mean": 0.502,
+      "ssim_std": 0.1589,
+      "lpips_mean": 0.3944,
+      "lpips_std": 0.1398,
+      "train_s": 11.3,
+      "infer_s": 16.1,
+      "params": 5200000
+    },
+    {
+      "name": "Global-δ (20 steps)",
+      "psnr_mean": 15.52,
+      "psnr_std": 3.48,
+      "ssim_mean": 0.4935,
+      "ssim_std": 0.1669,
+      "lpips_mean": 0.4047,
+      "lpips_std": 0.1533,
+      "train_s": 10.2,
+      "infer_s": 14.4,
+      "params": 3072
+    },
+    {
+      "name": "Multi-δ (20 steps, g4_4, lr=3e-3, l2=3e-4)",
+      "psnr_mean": 15.7,
+      "psnr_std": 3.33,
+      "ssim_mean": 0.4992,
+      "ssim_std": 0.1621,
+      "lpips_mean": 0.4002,
+      "lpips_std": 0.1424,
+      "train_s": 10.3,
+      "infer_s": 14.4,
+      "params": 27648
+    }
+  ],
+  "group_sweep": {
+    "config": {
+      "delta_steps": 20,
+      "delta_lr": 0.003,
+      "delta_l2": 0.0001
+    },
+    "points": [
+      {
+        "label": "(2,2)",
+        "groups_double": 2,
+        "groups_single": 2,
+        "psnr_mean": 15.45,
+        "psnr_std": 3.55,
+        "ssim_mean": 0.4932,
+        "ssim_std": 0.1647,
+        "lpips_mean": 0.4054,
+        "lpips_std": 0.1565,
+        "train_s": 11.3,
+        "infer_s": 14.4
+      },
+      {
+        "label": "(4,4)",
+        "groups_double": 4,
+        "groups_single": 4,
+        "psnr_mean": 15.68,
+        "psnr_std": 3.38,
+        "ssim_mean": 0.4985,
+        "ssim_std": 0.1625,
+        "lpips_mean": 0.4003,
+        "lpips_std": 0.1437,
+        "train_s": 10.4,
+        "infer_s": 14.5
+      },
+      {
+        "label": "(8,8)",
+        "groups_double": 8,
+        "groups_single": 8,
+        "psnr_mean": 15.56,
+        "psnr_std": 3.41,
+        "ssim_mean": 0.4944,
+        "ssim_std": 0.1656,
+        "lpips_mean": 0.4004,
+        "lpips_std": 0.1428,
+        "train_s": 10.4,
+        "infer_s": 14.5
+      }
+    ]
+  }
+}
+

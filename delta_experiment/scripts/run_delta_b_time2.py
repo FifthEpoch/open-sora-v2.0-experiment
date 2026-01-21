@@ -32,11 +32,20 @@ from delta_experiment.scripts.common import (
     save_video,
     select_videos,
     write_json,
+    build_augmented_latent_variants,
+    make_img_ids_from_time_ids,
 )
 from delta_experiment.scripts.delta_modules import make_delta_groups, forward_with_delta_groups_time2
 
 # Shared timing utilities (repo root)
 from experiment_timing import PhaseTimer, TimingRecord, now_s, write_timing_files
+
+
+def parse_speed_factors(raw: str) -> list[float]:
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(",")]
+    return [float(p) for p in parts if p]
 
 
 def optimize_delta_groups_time2(
@@ -59,12 +68,11 @@ def optimize_delta_groups_time2(
     delta_l2: float,
     n_groups_double: int,
     n_groups_single: int,
+    latents_variants: list[dict[str, torch.Tensor]] | None = None,
 ) -> tuple[list[float], float]:
     """
     Optimize grouped timestep-dependent δ vectors using the same flow-matching MSE objective.
     """
-    from einops import repeat
-
     model.train()
 
     params = (
@@ -76,25 +84,39 @@ def optimize_delta_groups_time2(
     )
     optimizer = AdamW(params, lr=lr, weight_decay=weight_decay)
 
-    B, C, T, H, W = latents.shape
     patch_size = 2
     sigma_min = 1e-5
 
-    h_patches = H // patch_size
-    w_patches = W // patch_size
-    img_ids = torch.zeros(T, h_patches, w_patches, 3, device=device, dtype=dtype)
-    img_ids[..., 0] = img_ids[..., 0] + torch.arange(T, device=device)[:, None, None]
-    img_ids[..., 1] = img_ids[..., 1] + torch.arange(h_patches, device=device)[None, :, None]
-    img_ids[..., 2] = img_ids[..., 2] + torch.arange(w_patches, device=device)[None, None, :]
-    img_ids = repeat(img_ids, "t h w c -> b (t h w) c", b=B)
+    if latents_variants is None:
+        base_time = torch.arange(latents.shape[2], device=device, dtype=torch.long)
+        latents_variants = [{"latents": latents, "time_ids": base_time}]
 
+    variant_cache: list[dict[str, torch.Tensor]] = []
+    for variant in latents_variants:
+        v_latents = variant["latents"]
+        time_ids = variant["time_ids"]
+        B, C, T, H, W = v_latents.shape
+        h_patches = H // patch_size
+        w_patches = W // patch_size
+
+        img_ids = make_img_ids_from_time_ids(time_ids, h_patches, w_patches, B, device, dtype)
+        latents_packed = pack(v_latents, patch_size=patch_size)
+        masks = torch.ones(B, 1, T, H, W, device=device, dtype=dtype)
+        cond = torch.cat((masks, v_latents), dim=1)
+        cond_packed = pack(cond, patch_size=patch_size)
+
+        variant_cache.append(
+            {
+                "latents": v_latents,
+                "latents_packed": latents_packed,
+                "cond_packed": cond_packed,
+                "img_ids": img_ids,
+            }
+        )
+
+    B = variant_cache[0]["latents"].shape[0]
     txt_ids = torch.zeros(B, text_embeds["txt"].shape[1], 3, device=device, dtype=dtype)
     guidance_vec = torch.ones(B, device=device, dtype=dtype)
-
-    latents_packed = pack(latents, patch_size=patch_size)
-    masks = torch.ones(B, 1, T, H, W, device=device, dtype=dtype)
-    cond = torch.cat((masks, latents), dim=1)
-    cond_packed = pack(cond, patch_size=patch_size)
 
     losses: list[float] = []
     t0 = time.time()
@@ -107,8 +129,14 @@ def optimize_delta_groups_time2(
             for pg in optimizer.param_groups:
                 pg["lr"] = warmup_lr
 
+        variant = variant_cache[torch.randint(0, len(variant_cache), (1,), device=device).item()]
+        v_latents = variant["latents"]
+        latents_packed = variant["latents_packed"]
+        cond_packed = variant["cond_packed"]
+        img_ids = variant["img_ids"]
+
         t = torch.rand(B, device=device, dtype=dtype)  # s(t) in [0,1]
-        noise = torch.randn_like(latents)
+        noise = torch.randn_like(v_latents)
         noise_packed = pack(noise, patch_size=patch_size)
 
         t_rev = 1 - t
@@ -157,7 +185,8 @@ def optimize_delta_groups_time2(
 
     train_time = time.time() - t0
     model.eval()
-    del latents_packed, cond_packed, masks, cond, img_ids, txt_ids, guidance_vec
+    del txt_ids, guidance_vec
+    variant_cache.clear()
     torch.cuda.empty_cache()
     return losses, train_time
 
@@ -184,6 +213,10 @@ def main() -> None:
     parser.add_argument("--delta-l2", type=float, default=0.0)
     parser.add_argument("--groups-double", type=int, default=4)
     parser.add_argument("--groups-single", type=int, default=4)
+    parser.add_argument("--aug-enabled", action="store_true")
+    parser.add_argument("--aug-flip", action="store_true")
+    parser.add_argument("--aug-rotate-deg", type=float, default=0.0)
+    parser.add_argument("--aug-speed-factors", type=str, default="")
 
     parser.add_argument("--inference-steps", type=int, default=25)
     parser.add_argument("--guidance", type=float, default=7.5)
@@ -257,13 +290,28 @@ def main() -> None:
             delta_final_1 = torch.nn.Parameter(torch.zeros(hidden_size, device=device, dtype=dtype))
 
             with pt.phase("encode_video"):
-                latents, _ = load_video_for_training(video_path, model_ae, 33, device, dtype)
+                latents, pixel_frames = load_video_for_training(
+                    video_path, model_ae, 33, device, dtype,
+                    target_height=256, target_width=464
+                )
 
             with pt.phase("embed_text"):
                 with torch.no_grad():
                     txt_embed = model_t5(caption)
                     vec_embed = model_clip(caption)
             text_embeds = {"txt": txt_embed, "vec": vec_embed}
+
+            latents_variants = None
+            if args.aug_enabled:
+                speed_factors = parse_speed_factors(args.aug_speed_factors)
+                latents_variants = build_augmented_latent_variants(
+                    pixel_frames=pixel_frames,
+                    base_latents=latents,
+                    model_ae=model_ae,
+                    enable_flip=args.aug_flip,
+                    rotate_deg=args.aug_rotate_deg,
+                    speed_factors=speed_factors,
+                )
 
             with pt.phase("tta_train"):
                 losses, train_time = optimize_delta_groups_time2(
@@ -286,6 +334,7 @@ def main() -> None:
                     delta_l2=args.delta_l2,
                     n_groups_double=args.groups_double,
                     n_groups_single=args.groups_single,
+                    latents_variants=latents_variants,
                 )
             total_train += train_time
 
@@ -323,6 +372,9 @@ def main() -> None:
 
             output_path = videos_dir / f"{video_name}_deltaB_time2.mp4"
             with pt.phase("save_video"):
+                # Stitch original conditioning frames back into the output
+                output[:, :, :33, :, :] = pixel_frames.to(output.device, output.dtype)
+
                 save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
 
             total_s = now_s() - total_start

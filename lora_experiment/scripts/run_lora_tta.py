@@ -65,7 +65,12 @@ from lora_layers import (
 )
 
 # Reuse δ-experiment selection helper so we can exactly match a reference results.json video list/order.
-from delta_experiment.scripts.common import VideoSelectionConfig, select_videos
+from delta_experiment.scripts.common import (
+    VideoSelectionConfig,
+    select_videos,
+    build_augmented_latent_variants,
+    make_img_ids_from_time_ids,
+)
 
 
 def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.DataFrame:
@@ -111,6 +116,13 @@ def stratified_sample(df: pd.DataFrame, n_samples: int, seed: int = 42) -> pd.Da
             result = pd.concat([result, extra], ignore_index=True)
     
     return result.head(n_samples)  # Ensure exact count
+
+
+def parse_speed_factors(raw: str) -> list[float]:
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.split(",")]
+    return [float(p) for p in parts if p]
 
 
 def save_video(
@@ -166,6 +178,8 @@ def load_video_for_training(
     num_frames: int,
     device: torch.device,
     dtype: torch.dtype,
+    target_height: int | None = None,
+    target_width: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Load and encode video for training.
@@ -176,17 +190,22 @@ def load_video_for_training(
         num_frames: Number of conditioning frames to use
         device: Device to use
         dtype: Data type
+        target_height: Optional target height for resizing
+        target_width: Optional target width for resizing
     
     Returns:
         Tuple of (latents, pixel_frames) where latents are VAE-encoded
     """
     import av
+    import cv2
     
     container = av.open(video_path)
     frames = []
     
     for frame in container.decode(video=0):
         img = frame.to_ndarray(format='rgb24')
+        if target_height is not None and target_width is not None:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
         frames.append(img)
         if len(frames) >= num_frames:
             break
@@ -220,6 +239,7 @@ def finetune_lora_on_conditioning(
     config: dict,
     device: torch.device,
     dtype: torch.dtype,
+    latents_variants: list[dict[str, torch.Tensor]] | None = None,
 ) -> tuple[list, float]:
     """
     Fine-tune LoRA adapters on conditioning frames only.
@@ -265,35 +285,41 @@ def finetune_lora_on_conditioning(
         eps=1e-8,
     )
     
-    # Get latent shape: [B, C, T, H, W]
-    B, C, T, H, W = latents.shape
-    
-    # Pre-compute img_ids (positional embeddings for image patches)
-    # img_ids shape: [T, H//patch, W//patch, 3] -> [B, T*H*W/patch^2, 3]
-    h_patches = H // patch_size
-    w_patches = W // patch_size
-    img_ids = torch.zeros(T, h_patches, w_patches, 3, device=device, dtype=dtype)
-    img_ids[..., 0] = img_ids[..., 0] + torch.arange(T, device=device)[:, None, None]
-    img_ids[..., 1] = img_ids[..., 1] + torch.arange(h_patches, device=device)[None, :, None]
-    img_ids[..., 2] = img_ids[..., 2] + torch.arange(w_patches, device=device)[None, None, :]
-    img_ids = repeat(img_ids, "t h w c -> b (t h w) c", b=B)
-    
+    # Prepare latent variants (allows temporal augmentations)
+    if latents_variants is None:
+        base_time = torch.arange(latents.shape[2], device=device, dtype=torch.long)
+        latents_variants = [{"latents": latents, "time_ids": base_time}]
+
+    variant_cache: list[dict[str, torch.Tensor]] = []
+    for variant in latents_variants:
+        v_latents = variant["latents"]
+        time_ids = variant["time_ids"]
+        B, C, T, H, W = v_latents.shape
+        h_patches = H // patch_size
+        w_patches = W // patch_size
+
+        img_ids = make_img_ids_from_time_ids(time_ids, h_patches, w_patches, B, device, dtype)
+        latents_packed = pack(v_latents, patch_size=patch_size)
+
+        masks = torch.ones(B, 1, T, H, W, device=device, dtype=dtype)
+        cond = torch.cat((masks, v_latents), dim=1)  # [B, C+1, T, H, W]
+        cond_packed = pack(cond, patch_size=patch_size)
+
+        variant_cache.append(
+            {
+                "latents": v_latents,
+                "latents_packed": latents_packed,
+                "cond_packed": cond_packed,
+                "img_ids": img_ids,
+            }
+        )
+
     # Pre-compute txt_ids (all zeros for text positional embeddings)
+    B = variant_cache[0]["latents"].shape[0]
     txt_ids = torch.zeros(B, text_embeds["txt"].shape[1], 3, device=device, dtype=dtype)
-    
+
     # Pre-compute guidance vector (no guidance during training, set to 1.0)
     guidance_vec = torch.ones(B, device=device, dtype=dtype)
-    
-    # Pack the target latents once (for computing target velocity)
-    # The model outputs in packed format, so we compare in packed format
-    latents_packed = pack(latents, patch_size=patch_size)
-    
-    # Pre-compute conditioning input for the model
-    # cond = concat(masks, latent) where masks indicate conditioning frames
-    # For TTA on conditioning frames, all frames are "conditioning" so mask is all 1s
-    masks = torch.ones(B, 1, T, H, W, device=device, dtype=dtype)
-    cond = torch.cat((masks, latents), dim=1)  # [B, C+1, T, H, W]
-    cond_packed = pack(cond, patch_size=patch_size)
     
     losses = []
     train_start = time.time()
@@ -310,8 +336,14 @@ def finetune_lora_on_conditioning(
         # Sample random timestep using flow matching: t ~ U(0, 1)
         t = torch.rand(B, device=device, dtype=dtype)
         
-        # Sample noise in latent space (reuse noise tensor each step)
-        noise = torch.randn_like(latents)
+        variant = variant_cache[torch.randint(0, len(variant_cache), (1,), device=device).item()]
+        v_latents = variant["latents"]
+        latents_packed = variant["latents_packed"]
+        cond_packed = variant["cond_packed"]
+        img_ids = variant["img_ids"]
+
+        # Sample noise in latent space
+        noise = torch.randn_like(v_latents)
         noise_packed = pack(noise, patch_size=patch_size)
         
         # Flow matching interpolation (following Open-Sora v2.0 convention)
@@ -363,7 +395,8 @@ def finetune_lora_on_conditioning(
     model.eval()
     
     # Final cleanup
-    del latents_packed, cond_packed, masks, cond, img_ids, txt_ids, guidance_vec
+    del txt_ids, guidance_vec
+    variant_cache.clear()
     torch.cuda.empty_cache()
     
     return losses, train_time
@@ -459,6 +492,12 @@ def run_tta_experiment(args):
         "stratified": args.stratified,
         "reference_results_json": args.reference_results_json,
         "dtype": args.dtype,
+        "augmentation": {
+            "enabled": args.aug_enabled,
+            "flip": args.aug_flip,
+            "rotate_deg": args.aug_rotate_deg,
+            "speed_factors": parse_speed_factors(args.aug_speed_factors),
+        },
     }
     
     with open(output_dir / "config.json", "w") as f:
@@ -546,8 +585,9 @@ def run_tta_experiment(args):
             
             # Load and encode conditioning frames
             with pt.phase("encode_video"):
-                latents, _ = load_video_for_training(
-                    video_path, model_ae, 33, device, dtype
+                latents, pixel_frames = load_video_for_training(
+                    video_path, model_ae, 33, device, dtype,
+                    target_height=256, target_width=464
                 )
             
             # Encode text
@@ -560,6 +600,18 @@ def run_tta_experiment(args):
                 "txt": txt_embed,
                 "vec": vec_embed,
             }
+
+            latents_variants = None
+            if args.aug_enabled:
+                speed_factors = parse_speed_factors(args.aug_speed_factors)
+                latents_variants = build_augmented_latent_variants(
+                    pixel_frames=pixel_frames,
+                    base_latents=latents,
+                    model_ae=model_ae,
+                    enable_flip=args.aug_flip,
+                    rotate_deg=args.aug_rotate_deg,
+                    speed_factors=speed_factors,
+                )
             
             # Fine-tune LoRA on conditioning frames
             with pt.phase("tta_train"):
@@ -573,6 +625,7 @@ def run_tta_experiment(args):
                     config=train_config,
                     device=device,
                     dtype=dtype,
+                    latents_variants=latents_variants,
                 )
             total_train_time += train_time
             
@@ -593,6 +646,11 @@ def run_tta_experiment(args):
             # Save output video, upscaling to conditioning resolution (256x464) with higher quality encoding
             output_path = videos_dir / f"{video_name}_lora.mp4"
             with pt.phase("save_video"):
+                # Stitch original conditioning frames back into the output
+                # output: [1, C, T, H, W], pixel_frames: [1, C, 33, H, W]
+                # Ensure we match resolution if needed (pixel_frames is already resized)
+                output[:, :, :33, :, :] = pixel_frames.to(output.device, output.dtype)
+
                 save_video(
                     output,
                     str(output_path),
@@ -757,6 +815,16 @@ def main():
                         help="Weight decay")
     parser.add_argument("--max-grad-norm", type=float, default=1.0,
                         help="Max gradient norm for clipping")
+
+    # Augmentation arguments (TTA only)
+    parser.add_argument("--aug-enabled", action="store_true",
+                        help="Enable data augmentation during TTA")
+    parser.add_argument("--aug-flip", action="store_true",
+                        help="Enable horizontal flip augmentation")
+    parser.add_argument("--aug-rotate-deg", type=float, default=0.0,
+                        help="Max rotation degrees (applies ±deg)")
+    parser.add_argument("--aug-speed-factors", type=str, default="",
+                        help="Comma-separated speed factors (e.g., 0.5,2.0)")
     
     # Inference arguments
     parser.add_argument("--inference-steps", type=int, default=25,
