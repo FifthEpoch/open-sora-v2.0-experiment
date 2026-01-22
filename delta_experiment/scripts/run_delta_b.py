@@ -41,6 +41,17 @@ from delta_experiment.scripts.delta_modules import make_delta_groups, forward_wi
 from experiment_timing import PhaseTimer, TimingRecord, now_s, write_timing_files
 
 
+def resize_pixel_frames_to_output(pixel_frames: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
+    if pixel_frames.shape[-2:] == output.shape[-2:]:
+        return pixel_frames
+    b, c, t, h, w = pixel_frames.shape
+    target_h, target_w = output.shape[-2], output.shape[-1]
+    frames = pixel_frames.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+    frames = F.interpolate(frames, size=(target_h, target_w), mode="bilinear", align_corners=False)
+    frames = frames.reshape(b, t, c, target_h, target_w).permute(0, 2, 1, 3, 4)
+    return frames
+
+
 def parse_speed_factors(raw: str) -> list[float]:
     if not raw:
         return []
@@ -358,7 +369,8 @@ def main():
             output_path = videos_dir / f"{video_name}_deltaB.mp4"
             with pt.phase("save_video"):
                 # Stitch original conditioning frames back into the output
-                output[:, :, :33, :, :] = pixel_frames.to(output.device, output.dtype)
+                stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
 

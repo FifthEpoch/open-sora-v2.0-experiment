@@ -125,6 +125,17 @@ def parse_speed_factors(raw: str) -> list[float]:
     return [float(p) for p in parts if p]
 
 
+def resize_pixel_frames_to_output(pixel_frames: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
+    if pixel_frames.shape[-2:] == output.shape[-2:]:
+        return pixel_frames
+    b, c, t, h, w = pixel_frames.shape
+    target_h, target_w = output.shape[-2], output.shape[-1]
+    frames = pixel_frames.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+    frames = F.interpolate(frames, size=(target_h, target_w), mode="bilinear", align_corners=False)
+    frames = frames.reshape(b, t, c, target_h, target_w).permute(0, 2, 1, 3, 4)
+    return frames
+
+
 def save_video(
     video_tensor: torch.Tensor,
     output_path: str,
@@ -649,7 +660,8 @@ def run_tta_experiment(args):
                 # Stitch original conditioning frames back into the output
                 # output: [1, C, T, H, W], pixel_frames: [1, C, 33, H, W]
                 # Ensure we match resolution if needed (pixel_frames is already resized)
-                output[:, :, :33, :, :] = pixel_frames.to(output.device, output.dtype)
+                stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(
                     output,
