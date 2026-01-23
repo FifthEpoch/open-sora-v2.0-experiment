@@ -58,11 +58,40 @@ def load_timing(run_dir: Path) -> dict | None:
     if timing_path.exists():
         with open(timing_path) as f:
             data = json.load(f)
+        phases = data.get("phases_s", {})
         return {
-            "train_time_mean_s": data.get("phases_mean_s", {}).get("tta_train"),
-            "gen_time_mean_s": data.get("phases_mean_s", {}).get("generate"),
+            "train_time_mean_s": (phases.get("tta_train") or {}).get("mean_s"),
+            "gen_time_mean_s": (phases.get("generate") or {}).get("mean_s"),
         }
-    return None
+
+    # Fallback: compute from per-video jsonl
+    per_video = run_dir / "timing_per_video.jsonl"
+    if not per_video.exists():
+        return None
+    train_vals = []
+    gen_vals = []
+    with open(per_video) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not rec.get("success", False):
+                continue
+            phases = rec.get("phases_s") or {}
+            if "tta_train" in phases:
+                train_vals.append(float(phases["tta_train"]))
+            if "generate" in phases:
+                gen_vals.append(float(phases["generate"]))
+    if not train_vals and not gen_vals:
+        return None
+    return {
+        "train_time_mean_s": sum(train_vals) / len(train_vals) if train_vals else None,
+        "gen_time_mean_s": sum(gen_vals) / len(gen_vals) if gen_vals else None,
+    }
 
 
 def main() -> None:
