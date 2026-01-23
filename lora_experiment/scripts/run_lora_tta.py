@@ -661,6 +661,7 @@ def run_tta_experiment(args):
                 # output: [1, C, T, H, W], pixel_frames: [1, C, 33, H, W]
                 # Ensure we match resolution if needed (pixel_frames is already resized)
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                output = output.clone()
                 output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(

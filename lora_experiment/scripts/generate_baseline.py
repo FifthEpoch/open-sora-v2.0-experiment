@@ -337,6 +337,7 @@ def run_baseline_generation(args):
             with pt.phase("save_video"):
                 # Stitch original conditioning frames back into the output
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                output = output.clone()
                 output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(

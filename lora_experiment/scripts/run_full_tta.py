@@ -460,6 +460,7 @@ def run_full_tta(args):
             output_path = videos_dir / f"{video_name}_full.mp4"
             with pt.phase("save_video"):
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                output = output.clone()
                 output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
                 save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
 
