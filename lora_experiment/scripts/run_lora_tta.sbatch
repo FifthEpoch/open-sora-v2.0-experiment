@@ -41,6 +41,7 @@ fi
 
 # Source the scratch environment setup
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
+source "${PROJECT_ROOT}/env_setup/10_pexels_45k_env.sh"
 
 # Load modules
 module load anaconda3/2025.06
@@ -70,7 +71,7 @@ mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
 # Configuration
 # ==============================================================================
 
-DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
+DATA_DIR="${PEXELS_45K_DIR}"
 
 # LoRA hyperparameters - can be overridden by environment variables
 LORA_RANK="${LORA_RANK:-16}"

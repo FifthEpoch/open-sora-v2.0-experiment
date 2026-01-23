@@ -28,6 +28,7 @@ if [ ! -d "${PROJECT_ROOT}" ]; then
 fi
 
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
+source "${PROJECT_ROOT}/env_setup/10_pexels_45k_env.sh"
 module load anaconda3/2025.06
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
@@ -43,7 +44,7 @@ pip install lpips scikit-image --quiet
 
 mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
 
-DATA_DIR="${PROJECT_ROOT}/lora_experiment/data/ucf101_processed"
+DATA_DIR="${PEXELS_45K_DIR}"
 BASELINE_DIR="${PROJECT_ROOT}/lora_experiment/results/baseline"
 
 STEPS_LIST=(10 20 30 50 100)

@@ -133,6 +133,21 @@ torchrun --nproc_per_node 1 --standalone scripts/diffusion/inference.py \
     --prompt "your prompt"
 ```
 
+## Dataset: Open-Sora Pexels 45K
+
+We use the Open-Sora Pexels 45K dataset as the default example dataset for experiments.
+
+- Download helper: `env_setup/download_pexels_45k.sbatch`
+- Environment vars: `env_setup/10_pexels_45k_env.sh`
+
+Example:
+```bash
+sbatch env_setup/download_pexels_45k.sbatch
+source env_setup/10_pexels_45k_env.sh
+echo "$PEXELS_45K_DIR"
+echo "$PEXELS_45K_CSV"
+```
+
 ## Troubleshooting
 
 ### Environment Creation Fails
