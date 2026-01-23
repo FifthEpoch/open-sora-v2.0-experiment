@@ -1,0 +1,46 @@
+{
+  "no_aug": {
+    "baseline": {
+      "psnr": 15.49,
+      "ssim": 0.4943,
+      "lpips": 0.4105
+    },
+    "lora": {
+      "psnr": 15.60,
+      "ssim": 0.5020,
+      "lpips": 0.3944
+    },
+    "delta_a": {
+      "psnr": 15.52,
+      "ssim": 0.4935,
+      "lpips": 0.4047
+    },
+    "delta_b": {
+      "psnr": 15.70,
+      "ssim": 0.4992,
+      "lpips": 0.4002
+    }
+  },
+  "aug": {
+    "baseline": {
+      "psnr": 15.49,
+      "ssim": 0.4943,
+      "lpips": 0.4105
+    },
+    "lora": {
+      "psnr": 15.68,
+      "ssim": 0.5071,
+      "lpips": 0.3954
+    },
+    "delta_a": {
+      "psnr": 15.54,
+      "ssim": 0.4953,
+      "lpips": 0.4035
+    },
+    "delta_b": {
+      "psnr": 15.68,
+      "ssim": 0.4964,
+      "lpips": 0.4019
+    }
+  }
+}
