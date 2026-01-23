@@ -31,6 +31,13 @@ def find_eval_dirs(eval_root: Path, prefix: str) -> list[Path]:
     return sorted(out, key=lambda p: int(re.search(r"steps(\d+)", p.name).group(1)))
 
 
+def find_run_dir(candidates: list[Path]) -> Path | None:
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 def summary_to_row(summary: dict, name: str, timing: dict | None = None) -> dict:
     row = {
         "name": name,
@@ -147,7 +154,7 @@ def main() -> None:
         rows.append(summary_to_row(summary, f"delta_B_steps{steps}", timing))
 
     if args.include_100:
-        # Baseline 100
+        project_root = eval_root.parents[2]
         base_eval = eval_root / "comparison.json"
         if base_eval.exists():
             try:
@@ -156,12 +163,37 @@ def main() -> None:
                     if row.get("name") in ("baseline", "best_lora", "delta_A", "delta_B"):
                         name = row["name"]
                         timing = None
-                        if name == "best_lora":
-                            timing = load_timing(eval_root.parent.parent / "lora_experiment" / "results" / "lora_r8_lr2e-4_20steps_aug")
+                        if name == "baseline":
+                            run_dir = find_run_dir(
+                                [
+                                    project_root / "lora_experiment" / "results" / "baseline",
+                                ]
+                            )
+                        elif name == "best_lora":
+                            run_dir = find_run_dir(
+                                [
+                                    project_root / "lora_experiment" / "results" / "lora_r8_lr2e-4_20steps_aug",
+                                    project_root / "lora_experiment" / "results" / "lora_r8_lr2e-4_20steps",
+                                ]
+                            )
                         elif name == "delta_A":
-                            timing = load_timing(eval_root.parent / "delta_a_global_aug")
+                            run_dir = find_run_dir(
+                                [
+                                    eval_root.parent / "delta_a_global_aug",
+                                    eval_root.parent / "delta_a_global",
+                                ]
+                            )
                         elif name == "delta_B":
-                            timing = load_timing(eval_root.parent / "delta_b_grouped_aug")
+                            run_dir = find_run_dir(
+                                [
+                                    eval_root.parent / "delta_b_grouped_aug",
+                                    eval_root.parent / "delta_b_grouped",
+                                ]
+                            )
+                        else:
+                            run_dir = None
+                        if run_dir:
+                            timing = load_timing(run_dir)
                         rows.append(
                             {
                                 "name": f"{name}_100videos",
