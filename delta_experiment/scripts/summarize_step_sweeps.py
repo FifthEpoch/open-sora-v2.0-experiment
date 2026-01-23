@@ -94,6 +94,31 @@ def load_timing(run_dir: Path) -> dict | None:
             if "generate" in phases:
                 gen_vals.append(float(phases["generate"]))
     if not train_vals and not gen_vals:
+        # Fallback: try results.json (LoRA/baseline store times there)
+        results_path = run_dir / "results.json"
+        if results_path.exists():
+            try:
+                with open(results_path) as f:
+                    items = json.load(f)
+            except Exception:
+                items = []
+            train_vals = []
+            gen_vals = []
+            for it in items:
+                if not it.get("success", False):
+                    continue
+                if "train_time" in it:
+                    train_vals.append(float(it["train_time"]))
+                if "gen_time" in it:
+                    gen_vals.append(float(it["gen_time"]))
+                if "generation_time" in it:
+                    gen_vals.append(float(it["generation_time"]))
+            if not train_vals and not gen_vals:
+                return None
+            return {
+                "train_time_mean_s": sum(train_vals) / len(train_vals) if train_vals else None,
+                "gen_time_mean_s": sum(gen_vals) / len(gen_vals) if gen_vals else None,
+            }
         return None
     return {
         "train_time_mean_s": sum(train_vals) / len(train_vals) if train_vals else None,
