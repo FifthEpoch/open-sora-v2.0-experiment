@@ -21,6 +21,7 @@ from typing import Iterable
 
 import requests
 import subprocess
+import shutil
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,19 +82,43 @@ def _is_youtube_url(url: str) -> bool:
     return "youtube.com" in url or "youtu.be" in url
 
 
+def _validate_video(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return True
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=nw=1:nk=1",
+        str(path),
+    ]
+    return subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
 def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if out_path.exists() and out_path.stat().st_size >= min_bytes:
-        return True
+        return _validate_video(out_path)
     if _is_youtube_url(url):
         cmd = [
             "yt-dlp",
             "-f",
+            "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b",
+            "--merge-output-format",
             "mp4",
             "--merge-output-format",
             "mp4",
             "--no-part",
             "--quiet",
+            "--no-playlist",
+            "--extractor-args",
+            "youtube:player_client=android",
             "-o",
             str(out_path),
             url,
@@ -101,7 +126,7 @@ def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
         result = subprocess.run(cmd, check=False)
         if result.returncode != 0:
             return False
-        return out_path.exists() and out_path.stat().st_size >= min_bytes
+        return out_path.exists() and out_path.stat().st_size >= min_bytes and _validate_video(out_path)
     with requests.get(url, stream=True, timeout=60) as r:
         r.raise_for_status()
         content_type = r.headers.get("content-type", "")
@@ -111,7 +136,7 @@ def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
-    if out_path.exists() and out_path.stat().st_size >= min_bytes:
+    if out_path.exists() and out_path.stat().st_size >= min_bytes and _validate_video(out_path):
         return True
     if out_path.exists():
         out_path.unlink()
