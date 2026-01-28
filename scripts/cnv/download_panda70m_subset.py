@@ -15,6 +15,7 @@ import argparse
 import csv
 import gzip
 import json
+import zipfile
 from pathlib import Path
 from typing import Iterable
 
@@ -34,9 +35,13 @@ def parse_args() -> argparse.Namespace:
 
 def _open_text(path: Path):
     with open(path, "rb") as f:
-        head = f.read(2)
+        head = f.read(4)
     if head == b"\x1f\x8b":
         return gzip.open(path, "rt", encoding="utf-8", errors="replace")
+    if head == b"PK\x03\x04":
+        raise ValueError(f"Zip file detected: {path}")
+    if head == b"PAR1":
+        raise ValueError(f"Parquet file detected (unsupported): {path}")
     return open(path, "rt", encoding="utf-8", errors="replace")
 
 
@@ -51,9 +56,29 @@ def read_rows(path: Path) -> list[dict]:
                     continue
                 rows.append(json.loads(line))
         return rows
-    if suffix == ".csv":
+    if suffix in {".csv", ".tsv"}:
         with open(path, newline="") as f:
             return list(csv.DictReader(f))
+    if suffix == ".zip":
+        with zipfile.ZipFile(path) as zf:
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            if not names:
+                raise ValueError(f"Zip file empty: {path}")
+            name = names[0]
+            with zf.open(name) as f:
+                text = (line.decode("utf-8", errors="replace") for line in f)
+                rows = []
+                for line in text:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("{"):
+                        rows.append(json.loads(line))
+                    else:
+                        # treat first line as header if csv-like
+                        reader = csv.DictReader([line] + list(text))
+                        return list(reader)
+                return rows
     raise ValueError(f"Unsupported meta file: {path}")
 
 
