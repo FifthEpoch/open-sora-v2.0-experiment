@@ -47,6 +47,17 @@ if ! command -v huggingface-cli >/dev/null 2>&1; then
   pip install "huggingface_hub[cli]" --quiet
 fi
 
+if [ -z "${HF_TOKEN:-}" ]; then
+  echo "ERROR: HF_TOKEN is not set. Export it before submitting the job."
+  exit 1
+fi
+
+if command -v hf >/dev/null 2>&1; then
+  hf auth login --token "${HF_TOKEN}"
+else
+  huggingface-cli login --token "${HF_TOKEN}"
+fi
+
 echo "Downloading dataset..."
 huggingface-cli download --repo-type dataset hpcai-tech/open-sora-pexels-45k --local-dir "${PEXELS_45K_DIR}"
 
