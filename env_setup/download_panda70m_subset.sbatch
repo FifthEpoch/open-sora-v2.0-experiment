@@ -38,7 +38,7 @@ source "${PROJECT_ROOT}/env_setup/12_panda70m_env.sh"
 mkdir -p "${PANDA_100_DIR}"
 cd "${PROJECT_ROOT}"
 
-pip install requests pandarallel --quiet
+pip install requests pandarallel yt-dlp --quiet
 pip install gdown --quiet
 
 META_PATH="${PANDA_META_PATH:-}"
@@ -65,7 +65,8 @@ python scripts/cnv/download_panda70m_subset.py \
   --num-videos "${NUM_VIDEOS:-100}" \
   --seed "${SEED:-42}" \
   --min-duration "${MIN_DURATION:-4}" \
-  --max-duration "${MAX_DURATION:-60}"
+  --max-duration "${MAX_DURATION:-60}" \
+  --min-bytes "${MIN_BYTES:-1000000}"
 
 echo "Building Open-Sora manifest..."
 python scripts/cnv/meta.py \

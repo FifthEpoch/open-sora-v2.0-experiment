@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Iterable
 
 import requests
+import subprocess
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--min-duration", type=int, default=4)
     parser.add_argument("--max-duration", type=int, default=60)
+    parser.add_argument("--min-bytes", type=int, default=1_000_000)
     return parser.parse_args()
 
 
@@ -75,16 +77,45 @@ def read_rows(path: Path) -> list[dict]:
     raise ValueError(f"Unsupported meta file: {path}")
 
 
-def download_file(url: str, out_path: Path) -> None:
+def _is_youtube_url(url: str) -> bool:
+    return "youtube.com" in url or "youtu.be" in url
+
+
+def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    if out_path.exists():
-        return
+    if out_path.exists() and out_path.stat().st_size >= min_bytes:
+        return True
+    if _is_youtube_url(url):
+        cmd = [
+            "yt-dlp",
+            "-f",
+            "mp4",
+            "--merge-output-format",
+            "mp4",
+            "--no-part",
+            "--quiet",
+            "-o",
+            str(out_path),
+            url,
+        ]
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            return False
+        return out_path.exists() and out_path.stat().st_size >= min_bytes
     with requests.get(url, stream=True, timeout=60) as r:
         r.raise_for_status()
+        content_type = r.headers.get("content-type", "")
+        if "text/html" in content_type:
+            return False
         with open(out_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
+    if out_path.exists() and out_path.stat().st_size >= min_bytes:
+        return True
+    if out_path.exists():
+        out_path.unlink()
+    return False
 
 
 def main() -> None:
@@ -111,17 +142,21 @@ def main() -> None:
 
     random.seed(args.seed)
     random.shuffle(filtered)
-    subset = filtered[: args.num_videos]
-
     out_rows = []
-    for i, item in enumerate(subset):
+    failures = 0
+    for item in filtered:
+        if len(out_rows) >= args.num_videos:
+            break
         url = item.get("url") or item.get("video") or item.get("video_url")
         caption = item.get("caption") or item.get("text") or "panda video"
         if not url:
             continue
-        filename = f"panda_{i:04d}.mp4"
+        filename = f"panda_{len(out_rows):04d}.mp4"
         video_path = videos_dir / filename
-        download_file(url, video_path)
+        ok = download_file(url, video_path, args.min_bytes)
+        if not ok:
+            failures += 1
+            continue
         out_rows.append(
             {
                 "path": str(video_path),
@@ -138,6 +173,11 @@ def main() -> None:
         writer.writerows(out_rows)
 
     print(f"Wrote metadata: {metadata_path}")
+    if len(out_rows) < args.num_videos:
+        print(
+            f"WARNING: Only downloaded {len(out_rows)} / {args.num_videos} videos "
+            f"(failures: {failures}). Consider lowering --min-bytes or using yt-dlp."
+        )
 
 
 if __name__ == "__main__":
