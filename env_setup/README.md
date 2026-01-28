@@ -148,19 +148,19 @@ echo "$PEXELS_45K_DIR"
 echo "$PEXELS_45K_CSV"
 ```
 
-## Dataset: Pexels-400k (100-video subset)
+## Dataset: Panda-70M (100-video subset)
 
-We use a 100-video subset sampled from Pexels-400k (direct video URLs).
+We use a 100-video subset sampled from Panda-70M (officially referenced by Open-Sora).
 
-- Download helper: `env_setup/download_pexels_400k_subset.sbatch`
-- Environment vars: `env_setup/11_pexels_400k_env.sh`
+- Download helper: `env_setup/download_panda70m_subset.sbatch`
+- Environment vars: `env_setup/12_panda70m_env.sh`
 
 Example:
 ```bash
-sbatch env_setup/download_pexels_400k_subset.sbatch
-source env_setup/11_pexels_400k_env.sh
-echo "$PEXELS_100_DIR"
-echo "$PEXELS_100_CSV"
+sbatch env_setup/download_panda70m_subset.sbatch
+source env_setup/12_panda70m_env.sh
+echo "$PANDA_100_DIR"
+echo "$PANDA_100_CSV"
 ```
 
 ## Troubleshooting

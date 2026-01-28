@@ -1,17 +1,17 @@
 #!/bin/bash
-#SBATCH --job-name=pexels100_dl
+#SBATCH --job-name=panda100_dl
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=8:00:00
 #SBATCH --mem=64G
-#SBATCH --output=env_setup/slurm_log/pexels100_%j.out
-#SBATCH --error=env_setup/slurm_log/pexels100_%j.err
+#SBATCH --output=env_setup/slurm_log/panda100_%j.out
+#SBATCH --error=env_setup/slurm_log/panda100_%j.err
 
 set -euo pipefail
 
 echo "=============================================================================="
-echo "Download Pexels-400k 100-video subset + build manifest"
+echo "Download Panda-70M 100-video subset + build manifest"
 echo "=============================================================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
@@ -33,15 +33,30 @@ conda activate opensora20
 set -u
 export PATH="${CONDA_PREFIX}/bin:${PATH}"
 
-source "${PROJECT_ROOT}/env_setup/11_pexels_400k_env.sh"
+source "${PROJECT_ROOT}/env_setup/12_panda70m_env.sh"
 
-mkdir -p "${PEXELS_100_DIR}"
+mkdir -p "${PANDA_100_DIR}"
 cd "${PROJECT_ROOT}"
 
-pip install datasets requests pandarallel --quiet
+pip install requests pandarallel --quiet
 
-python scripts/cnv/download_pexels400k_subset.py \
-  --out-dir "${PEXELS_100_DIR}" \
+META_PATH="${PANDA_META_PATH:-}"
+META_URL="${PANDA_META_URL:-}"
+
+if [ -z "${META_PATH}" ]; then
+  if [ -n "${META_URL}" ]; then
+    META_PATH="${PANDA_100_DIR}/panda70m_metadata.jsonl"
+    echo "Downloading metadata from ${META_URL}"
+    curl -L "${META_URL}" -o "${META_PATH}"
+  else
+    echo "ERROR: Set PANDA_META_PATH or PANDA_META_URL to a Panda-70M metadata file."
+    exit 1
+  fi
+fi
+
+python scripts/cnv/download_panda70m_subset.py \
+  --meta-path "${META_PATH}" \
+  --out-dir "${PANDA_100_DIR}" \
   --num-videos "${NUM_VIDEOS:-100}" \
   --seed "${SEED:-42}" \
   --min-duration "${MIN_DURATION:-4}" \
@@ -49,13 +64,13 @@ python scripts/cnv/download_pexels400k_subset.py \
 
 echo "Building Open-Sora manifest..."
 python scripts/cnv/meta.py \
-  --input "${PEXELS_100_METADATA}" \
-  --output "${PEXELS_100_CSV}" \
+  --input "${PANDA_100_METADATA}" \
+  --output "${PANDA_100_CSV}" \
   --num_workers "${NUM_WORKERS:-0}"
 
 echo "=============================================================================="
-echo "Done: Pexels-400k 100-video subset"
-echo "Dataset: ${PEXELS_100_DIR}"
-echo "Manifest: ${PEXELS_100_CSV}"
+echo "Done: Panda-70M 100-video subset"
+echo "Dataset: ${PANDA_100_DIR}"
+echo "Manifest: ${PANDA_100_CSV}"
 echo "End time: $(date)"
 echo "=============================================================================="
