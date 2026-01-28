@@ -61,24 +61,14 @@ def read_rows(path: Path) -> list[dict]:
             return list(csv.DictReader(f))
     if suffix == ".zip":
         with zipfile.ZipFile(path) as zf:
-            names = [n for n in zf.namelist() if not n.endswith("/")]
+            names = [n for n in zf.namelist() if n.endswith(".csv")]
             if not names:
-                raise ValueError(f"Zip file empty: {path}")
+                raise ValueError(f"No CSV found in zip: {path}")
             name = names[0]
             with zf.open(name) as f:
                 text = (line.decode("utf-8", errors="replace") for line in f)
-                rows = []
-                for line in text:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    if line.startswith("{"):
-                        rows.append(json.loads(line))
-                    else:
-                        # treat first line as header if csv-like
-                        reader = csv.DictReader([line] + list(text))
-                        return list(reader)
-                return rows
+                reader = csv.DictReader(text)
+                return list(reader)
     raise ValueError(f"Unsupported meta file: {path}")
 
 
