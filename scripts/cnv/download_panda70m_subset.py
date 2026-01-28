@@ -33,19 +33,32 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _open_text(path: Path):
+def _file_magic(path: Path) -> bytes:
     with open(path, "rb") as f:
-        head = f.read(4)
+        return f.read(4)
+
+
+def _open_text(path: Path):
+    head = _file_magic(path)
     if head == b"\x1f\x8b":
         return gzip.open(path, "rt", encoding="utf-8", errors="replace")
-    if head == b"PK\x03\x04":
-        raise ValueError(f"Zip file detected: {path}")
     if head == b"PAR1":
         raise ValueError(f"Parquet file detected (unsupported): {path}")
     return open(path, "rt", encoding="utf-8", errors="replace")
 
 
 def read_rows(path: Path) -> list[dict]:
+    head = _file_magic(path)
+    if head == b"PK\x03\x04":
+        with zipfile.ZipFile(path) as zf:
+            names = [n for n in zf.namelist() if n.endswith(".csv")]
+            if not names:
+                raise ValueError(f"No CSV found in zip: {path}")
+            name = names[0]
+            with zf.open(name) as f:
+                text = (line.decode("utf-8", errors="replace") for line in f)
+                reader = csv.DictReader(text)
+                return list(reader)
     suffix = path.suffix.lower()
     if suffix in {".jsonl", ".gz"}:
         rows = []
@@ -59,16 +72,6 @@ def read_rows(path: Path) -> list[dict]:
     if suffix in {".csv", ".tsv"}:
         with open(path, newline="") as f:
             return list(csv.DictReader(f))
-    if suffix == ".zip":
-        with zipfile.ZipFile(path) as zf:
-            names = [n for n in zf.namelist() if n.endswith(".csv")]
-            if not names:
-                raise ValueError(f"No CSV found in zip: {path}")
-            name = names[0]
-            with zf.open(name) as f:
-                text = (line.decode("utf-8", errors="replace") for line in f)
-                reader = csv.DictReader(text)
-                return list(reader)
     raise ValueError(f"Unsupported meta file: {path}")
 
 
