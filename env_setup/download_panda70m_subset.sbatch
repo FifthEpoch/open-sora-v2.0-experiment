@@ -39,6 +39,7 @@ mkdir -p "${PANDA_100_DIR}"
 cd "${PROJECT_ROOT}"
 
 pip install requests pandarallel --quiet
+pip install gdown --quiet
 
 META_PATH="${PANDA_META_PATH:-}"
 META_URL="${PANDA_META_URL:-}"
@@ -47,7 +48,11 @@ if [ -z "${META_PATH}" ]; then
   if [ -n "${META_URL}" ]; then
     META_PATH="${PANDA_100_DIR}/panda70m_metadata.jsonl"
     echo "Downloading metadata from ${META_URL}"
-    curl -L "${META_URL}" -o "${META_PATH}"
+    if echo "${META_URL}" | grep -q "drive.google.com"; then
+      gdown --fuzzy "${META_URL}" -O "${META_PATH}"
+    else
+      curl -L "${META_URL}" -o "${META_PATH}"
+    fi
   else
     echo "ERROR: Set PANDA_META_PATH or PANDA_META_URL to a Panda-70M metadata file."
     exit 1
