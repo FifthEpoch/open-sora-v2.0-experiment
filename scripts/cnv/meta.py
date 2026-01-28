@@ -19,11 +19,20 @@ def set_parallel(num_workers: int = None) -> callable:
 
 
 def get_video_info(path: str) -> pd.Series:
-    vframes, _, vinfo = read_video(path, pts_unit="sec", output_format="TCHW")
-    num_frames, C, height, width = vframes.shape
-    fps = round(vinfo["video_fps"], 3)
-    aspect_ratio = height / width if width > 0 else np.nan
-    resolution = height * width
+    try:
+        vframes, _, vinfo = read_video(path, pts_unit="sec", output_format="TCHW")
+        num_frames, _, height, width = vframes.shape
+        fps = round(vinfo["video_fps"], 3)
+        aspect_ratio = height / width if width > 0 else np.nan
+        resolution = height * width
+    except Exception as exc:
+        print(f"Failed to read video: {path} ({exc})")
+        height = np.nan
+        width = np.nan
+        fps = np.nan
+        num_frames = np.nan
+        aspect_ratio = np.nan
+        resolution = np.nan
 
     ret = pd.Series(
         [height, width, fps, num_frames, aspect_ratio, resolution],
