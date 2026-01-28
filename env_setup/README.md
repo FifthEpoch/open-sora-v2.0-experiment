@@ -148,6 +148,21 @@ echo "$PEXELS_45K_DIR"
 echo "$PEXELS_45K_CSV"
 ```
 
+## Dataset: Pexels-400k (100-video subset)
+
+We use a 100-video subset sampled from Pexels-400k (direct video URLs).
+
+- Download helper: `env_setup/download_pexels_400k_subset.sbatch`
+- Environment vars: `env_setup/11_pexels_400k_env.sh`
+
+Example:
+```bash
+sbatch env_setup/download_pexels_400k_subset.sbatch
+source env_setup/11_pexels_400k_env.sh
+echo "$PEXELS_100_DIR"
+echo "$PEXELS_100_CSV"
+```
+
 ## Troubleshooting
 
 ### Environment Creation Fails

@@ -27,7 +27,7 @@ if [ ! -d "${PROJECT_ROOT}" ]; then
 fi
 
 source "${PROJECT_ROOT}/env_setup/00_set_scratch_env.sh"
-source "${PROJECT_ROOT}/env_setup/10_pexels_45k_env.sh"
+source "${PROJECT_ROOT}/env_setup/11_pexels_400k_env.sh"
 module load anaconda3/2025.06
 export QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION:-none}"
 set +u
@@ -43,7 +43,7 @@ pip install -e . --quiet
 
 mkdir -p "${PROJECT_ROOT}/lora_experiment/logs"
 
-DATA_DIR="${PEXELS_45K_DIR}"
+DATA_DIR="${PEXELS_100_DIR}"
 
 # Full-model hyperparameters (override via env if desired)
 LEARNING_RATE="${LEARNING_RATE:-2e-4}"
