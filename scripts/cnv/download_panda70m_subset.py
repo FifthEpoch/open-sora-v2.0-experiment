@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import json
 from pathlib import Path
 from typing import Iterable
@@ -31,17 +32,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _open_text(path: Path):
+    with open(path, "rb") as f:
+        head = f.read(2)
+    if head == b"\x1f\x8b":
+        return gzip.open(path, "rt", encoding="utf-8", errors="replace")
+    return open(path, "rt", encoding="utf-8", errors="replace")
+
+
 def read_rows(path: Path) -> list[dict]:
-    if path.suffix.lower() == ".jsonl":
+    suffix = path.suffix.lower()
+    if suffix in {".jsonl", ".gz"}:
         rows = []
-        with open(path) as f:
+        with _open_text(path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 rows.append(json.loads(line))
         return rows
-    if path.suffix.lower() == ".csv":
+    if suffix == ".csv":
         with open(path, newline="") as f:
             return list(csv.DictReader(f))
     raise ValueError(f"Unsupported meta file: {path}")
