@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=48:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=lora_experiment/logs/lora_tta_%j.out
 #SBATCH --error=lora_experiment/logs/lora_tta_%j.err
@@ -58,6 +58,7 @@ echo "Python: $(which python) - $(python --version)"
 
 # Set PYTHONPATH
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+export MALLOC_ARENA_MAX=2
 
 # Reinstall opensora in editable mode
 cd "${PROJECT_ROOT}"

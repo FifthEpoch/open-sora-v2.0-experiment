@@ -67,7 +67,9 @@ python scripts/cnv/download_panda70m_subset.py \
   --seed "${SEED:-42}" \
   --min-duration "${MIN_DURATION:-4}" \
   --max-duration "${MAX_DURATION:-60}" \
-  --min-bytes "${MIN_BYTES:-1000000}"
+  --min-bytes "${MIN_BYTES:-1000000}" \
+  --resize-height "${RESIZE_HEIGHT:-256}" \
+  --resize-width "${RESIZE_WIDTH:-464}"
 
 echo "Building Open-Sora manifest..."
 python scripts/cnv/meta.py \

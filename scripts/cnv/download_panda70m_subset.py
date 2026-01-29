@@ -33,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration", type=int, default=4)
     parser.add_argument("--max-duration", type=int, default=60)
     parser.add_argument("--min-bytes", type=int, default=1_000_000)
+    parser.add_argument("--resize-height", type=int, default=None)
+    parser.add_argument("--resize-width", type=int, default=None)
     return parser.parse_args()
 
 
@@ -99,6 +101,42 @@ def _validate_video(path: Path) -> bool:
         str(path),
     ]
     return subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def _resize_video(path: Path, height: int, width: int) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        print("WARNING: ffmpeg not found; skipping resize.")
+        return True
+    tmp_path = path.with_suffix(".tmp.mp4")
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(path),
+        "-vf",
+        f"scale={width}:{height}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        str(tmp_path),
+    ]
+    result = subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if result.returncode != 0 or not tmp_path.exists():
+        if tmp_path.exists():
+            tmp_path.unlink()
+        return False
+    tmp_path.replace(path)
+    return True
 
 
 def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
@@ -184,6 +222,13 @@ def main() -> None:
         if not ok:
             failures += 1
             continue
+        if args.resize_height is not None and args.resize_width is not None:
+            resized = _resize_video(video_path, args.resize_height, args.resize_width)
+            if not resized:
+                failures += 1
+                if video_path.exists():
+                    video_path.unlink()
+                continue
         out_rows.append(
             {
                 "path": str(video_path),
