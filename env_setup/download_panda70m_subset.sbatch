@@ -39,6 +39,7 @@ mkdir -p "${PANDA_100_DIR}"
 cd "${PROJECT_ROOT}"
 
 pip install requests pandarallel yt-dlp --quiet
+conda install -c conda-forge nodejs ffmpeg av -y --quiet
 pip install gdown --quiet
 
 META_PATH="${PANDA_META_PATH:-}"

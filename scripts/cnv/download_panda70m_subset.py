@@ -117,6 +117,8 @@ def download_file(url: str, out_path: Path, min_bytes: int) -> bool:
             "--no-part",
             "--quiet",
             "--no-playlist",
+            "--js-runtimes",
+            "node",
             "--extractor-args",
             "youtube:player_client=android",
             "-o",
