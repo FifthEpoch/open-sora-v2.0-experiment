@@ -303,7 +303,7 @@ def main() -> None:
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
                     video_path, model_ae, 33, device, dtype,
-                    target_height=256, target_width=464
+                    target_height=192, target_width=336
                 )
 
             with pt.phase("embed_text"):
@@ -388,7 +388,7 @@ def main() -> None:
                 output = output.clone()
                 output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
-                save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
+                save_video(output, str(output_path), fps=24, target_height=192, target_width=336)
 
             total_s = now_s() - total_start
             results.append(

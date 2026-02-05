@@ -33,6 +33,8 @@ from delta_experiment.scripts.common import (
     write_json,
     save_video,
     load_video_for_training,
+    load_video_for_eval,
+    compute_psnr_tensor,
     build_augmented_latent_variants,
     make_img_ids_from_time_ids,
 )
@@ -203,6 +205,8 @@ def main():
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--delta-l2", type=float, default=0.0)
+    parser.add_argument("--best-of", type=int, default=1,
+                        help="Generate N samples and keep best by PSNR (uses GT frames)")
     parser.add_argument("--aug-enabled", action="store_true")
     parser.add_argument("--aug-flip", action="store_true")
     parser.add_argument("--aug-rotate-deg", type=float, default=0.0)
@@ -286,7 +290,15 @@ def main():
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
                     video_path, model_ae, 33, device, dtype,
-                    target_height=256, target_width=464
+                    target_height=192, target_width=336
+                )
+            gt_frames = None
+            if args.best_of > 1:
+                gt_frames = load_video_for_eval(
+                    video_path,
+                    num_frames=65,
+                    target_height=192,
+                    target_width=336,
                 )
 
             with pt.phase("embed_text"):
@@ -327,29 +339,46 @@ def main():
             total_train += train_time
 
             # Apply δ during generation by enabling wrapper (no grad)
+            output_path = videos_dir / f"{video_name}_deltaA.mp4"
+            best_psnr = None
+            best_sample_idx = None
+            best_output = None
             with pt.phase("generate"):
                 delta_wrapper.enable(delta)
-                with torch.inference_mode():
-                    output = api_fn(
-                        sampling_option,
-                        cond_type="v2v_head",
-                        text=[caption],
-                        ref=[video_path],
-                        seed=args.seed + idx,
-                        channel=cfg.model.get("in_channels", 64),
-                    )
+                for sample_idx in range(max(1, args.best_of)):
+                    with torch.inference_mode():
+                        output = api_fn(
+                            sampling_option,
+                            cond_type="v2v_head",
+                            text=[caption],
+                            ref=[video_path],
+                            seed=args.seed + idx * 1000 + sample_idx,
+                            channel=cfg.model.get("in_channels", 64),
+                        )
+                    stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                    output = output.clone()
+                    output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                    if gt_frames is not None:
+                        pred_gen = output[:, :, 33:, :, :].detach().cpu()
+                        gt_gen = gt_frames[:, :, 33:, :, :]
+                        psnr = compute_psnr_tensor(pred_gen, gt_gen)
+                        if best_psnr is None or psnr > best_psnr:
+                            best_psnr = psnr
+                            best_sample_idx = sample_idx
+                            best_output = output.detach().cpu()
+                    else:
+                        best_output = output
+                        best_sample_idx = 0
+                        break
+                    del output
                 delta_wrapper.disable()
             gen_time = phases.get("generate", 0.0)
             total_gen += gen_time
 
-            output_path = videos_dir / f"{video_name}_deltaA.mp4"
             with pt.phase("save_video"):
-                # Stitch original conditioning frames back into the output
-                stitched = resize_pixel_frames_to_output(pixel_frames, output)
-                output = output.clone()
-                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
-
-                save_video(output, str(output_path), fps=24, target_height=256, target_width=464)
+                if best_output is None:
+                    raise RuntimeError("No output generated during best-of sampling.")
+                save_video(best_output, str(output_path), fps=24, target_height=192, target_width=336)
 
             total_s = now_s() - total_start
 
@@ -364,6 +393,9 @@ def main():
                 "total_time": train_time + gen_time,
                 "final_loss": losses[-1] if losses else None,
                 "avg_loss": sum(losses) / len(losses) if losses else None,
+                "best_of": args.best_of,
+                "best_sample_idx": best_sample_idx,
+                "best_psnr": best_psnr,
                 "success": True,
             })
             timing_records.append(
@@ -382,7 +414,7 @@ def main():
                 ).to_dict()
             )
 
-            del latents, txt_embed, vec_embed, output, losses, delta
+            del latents, txt_embed, vec_embed, losses, delta, best_output
 
         except Exception as e:
             results.append({

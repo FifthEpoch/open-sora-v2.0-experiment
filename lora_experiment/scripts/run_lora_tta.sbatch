@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=48:00:00
-#SBATCH --mem=128G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=lora_experiment/logs/lora_tta_%j.out
 #SBATCH --error=lora_experiment/logs/lora_tta_%j.err
@@ -93,6 +93,7 @@ STRATIFIED="${STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
 RESTART="${LORA_RESTART:-true}"  # Default to restart (fresh start)
+BEST_OF="${BEST_OF:-1}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"
@@ -124,6 +125,7 @@ echo "  Stratified sampling: ${STRATIFIED}"
 echo "  Restart (fresh start): ${RESTART}"
 echo "  Seed: ${SEED}"
 echo "  Save LoRA weights: ${SAVE_LORA_WEIGHTS}"
+echo "  Best-of: ${BEST_OF}"
 echo "  Aug enabled: ${AUG_ENABLED}"
 echo "  Aug flip: ${AUG_FLIP}"
 echo "  Aug rotate deg: ${AUG_ROTATE_DEG}"
@@ -165,6 +167,9 @@ fi
 
 if [ "${RESTART}" = "true" ]; then
     CMD="${CMD} --restart"
+fi
+if [ -n "${BEST_OF}" ]; then
+    CMD="${CMD} --best-of ${BEST_OF}"
 fi
 
 if [ "${AUG_ENABLED}" = "true" ]; then

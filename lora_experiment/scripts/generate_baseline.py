@@ -313,7 +313,7 @@ def run_baseline_generation(args):
             
             # Load conditioning frames for stitching later
             pixel_frames = load_video_for_conditioning(
-                video_path, num_frames=33, target_height=256, target_width=464,
+                video_path, num_frames=33, target_height=192, target_width=336,
                 device=device, dtype=dtype
             )
 
@@ -344,8 +344,8 @@ def run_baseline_generation(args):
                     output,
                     str(output_path),
                     fps=24,
-                    target_height=256,
-                    target_width=464,
+                    target_height=192,
+                    target_width=336,
                 )
 
             total_s = now_s() - total_start

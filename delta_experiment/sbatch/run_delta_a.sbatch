@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=48:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=delta_experiment/logs/deltaA_%j.out
 #SBATCH --error=delta_experiment/logs/deltaA_%j.err
@@ -55,6 +55,7 @@ WARMUP_STEPS="${WARMUP_STEPS:-3}"
 MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
+BEST_OF="${BEST_OF:-1}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"
@@ -74,6 +75,9 @@ CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_a.py \
 
 if [ "${STRATIFIED}" = "true" ]; then
   CMD="${CMD} --stratified"
+fi
+if [ -n "${BEST_OF}" ]; then
+  CMD="${CMD} --best-of ${BEST_OF}"
 fi
 
 if [ "${AUG_ENABLED}" = "true" ]; then

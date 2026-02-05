@@ -243,6 +243,47 @@ def load_video_for_training(
     return latents, pixel_frames
 
 
+def load_video_for_eval(
+    video_path: str,
+    num_frames: int,
+    target_height: int | None = None,
+    target_width: int | None = None,
+) -> torch.Tensor:
+    """Load full video clip for evaluation (pixel space, CPU)."""
+    import av
+    import cv2
+
+    container = av.open(video_path)
+    frames = []
+    for frame in container.decode(video=0):
+        img = frame.to_ndarray(format="rgb24")
+        if target_height is not None and target_width is not None:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+        frames.append(img)
+        if len(frames) >= num_frames:
+            break
+    container.close()
+
+    if len(frames) < num_frames:
+        while len(frames) < num_frames:
+            frames.append(frames[-1])
+
+    frames = np.stack(frames[:num_frames], axis=0)
+    frames = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0
+    pixel_frames = frames * 2 - 1
+    return pixel_frames.unsqueeze(0)
+
+
+def compute_psnr_tensor(pred: torch.Tensor, gt: torch.Tensor) -> float:
+    """Compute PSNR between two tensors in [-1, 1] range."""
+    pred_u8 = ((pred + 1) / 2).clamp(0, 1) * 255.0
+    gt_u8 = ((gt + 1) / 2).clamp(0, 1) * 255.0
+    mse = torch.mean((pred_u8 - gt_u8) ** 2)
+    if mse.item() == 0:
+        return float("inf")
+    return float(20 * torch.log10(torch.tensor(255.0)) - 10 * torch.log10(mse))
+
+
 def finetune_lora_on_conditioning(
     model,
     latents: torch.Tensor,
@@ -498,6 +539,7 @@ def run_tta_experiment(args):
             "guidance": args.guidance,
             "guidance_img": args.guidance_img,
         },
+        "best_of": args.best_of,
         "seed": args.seed,
         "max_videos": args.max_videos,
         "stratified": args.stratified,
@@ -598,7 +640,15 @@ def run_tta_experiment(args):
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
                     video_path, model_ae, 33, device, dtype,
-                    target_height=256, target_width=464
+                    target_height=192, target_width=336
+                )
+            gt_frames = None
+            if args.best_of > 1:
+                gt_frames = load_video_for_eval(
+                    video_path,
+                    num_frames=65,
+                    target_height=192,
+                    target_width=336,
                 )
             
             # Encode text
@@ -641,35 +691,50 @@ def run_tta_experiment(args):
             total_train_time += train_time
             
             # Generate continuation with adapted model
+            output_path = videos_dir / f"{video_name}_lora.mp4"
+            best_psnr = None
+            best_sample_idx = None
+            best_output = None
             with pt.phase("generate"):
-                with torch.inference_mode():
-                    output = api_fn(
-                        sampling_option,
-                        cond_type="v2v_head",
-                        text=[caption],
-                        ref=[video_path],
-                        seed=args.seed + idx,
-                        channel=cfg.model.get("in_channels", 64),
-                    )
+                for sample_idx in range(max(1, args.best_of)):
+                    with torch.inference_mode():
+                        output = api_fn(
+                            sampling_option,
+                            cond_type="v2v_head",
+                            text=[caption],
+                            ref=[video_path],
+                            seed=args.seed + idx * 1000 + sample_idx,
+                            channel=cfg.model.get("in_channels", 64),
+                        )
+                    stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                    output = output.clone()
+                    output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                    if gt_frames is not None:
+                        pred_gen = output[:, :, 33:, :, :].detach().cpu()
+                        gt_gen = gt_frames[:, :, 33:, :, :]
+                        psnr = compute_psnr_tensor(pred_gen, gt_gen)
+                        if best_psnr is None or psnr > best_psnr:
+                            best_psnr = psnr
+                            best_sample_idx = sample_idx
+                            best_output = output.detach().cpu()
+                    else:
+                        best_output = output
+                        best_sample_idx = 0
+                        break
+                    del output
             gen_time = phases.get("generate", 0.0)
             total_gen_time += gen_time
-            
-            # Save output video, upscaling to conditioning resolution (256x464) with higher quality encoding
-            output_path = videos_dir / f"{video_name}_lora.mp4"
-            with pt.phase("save_video"):
-                # Stitch original conditioning frames back into the output
-                # output: [1, C, T, H, W], pixel_frames: [1, C, 33, H, W]
-                # Ensure we match resolution if needed (pixel_frames is already resized)
-                stitched = resize_pixel_frames_to_output(pixel_frames, output)
-                output = output.clone()
-                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
 
+            # Save best output video only
+            with pt.phase("save_video"):
+                if best_output is None:
+                    raise RuntimeError("No output generated during best-of sampling.")
                 save_video(
-                    output,
+                    best_output,
                     str(output_path),
                     fps=24,
-                    target_height=256,
-                    target_width=464,
+                    target_height=192,
+                    target_width=336,
                 )
             
             # Optionally save LoRA weights
@@ -691,6 +756,9 @@ def run_tta_experiment(args):
                 "total_time": train_time + gen_time,
                 "final_loss": losses[-1] if losses else None,
                 "avg_loss": sum(losses) / len(losses) if losses else None,
+                "best_of": args.best_of,
+                "best_sample_idx": best_sample_idx,
+                "best_psnr": best_psnr,
                 "success": True,
             }
             results.append(result)
@@ -712,7 +780,7 @@ def run_tta_experiment(args):
             success_count += 1
             
             # Cleanup after successful processing
-            del latents, text_embeds, txt_embed, vec_embed, output, losses
+            del latents, text_embeds, txt_embed, vec_embed, losses, best_output
             
         except Exception as e:
             import traceback
@@ -860,6 +928,8 @@ def main():
                         help="Restart from beginning (ignore checkpoint)")
     parser.add_argument("--save-lora-weights", action="store_true",
                         help="Save LoRA weights for each video")
+    parser.add_argument("--best-of", type=int, default=1,
+                        help="Generate N samples and keep best by PSNR (uses GT frames)")
     parser.add_argument(
         "--reference-results-json",
         type=str,

@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=48:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=lora_experiment/logs/full_tta_%j.out
 #SBATCH --error=lora_experiment/logs/full_tta_%j.err
@@ -61,6 +61,7 @@ GUIDANCE_IMG="${GUIDANCE_IMG:-3.0}"
 MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
+BEST_OF="${BEST_OF:-1}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"
@@ -86,6 +87,7 @@ echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS}"
 echo "  Stratified: ${STRATIFIED}"
 echo "  Seed: ${SEED}"
+echo "  Best-of: ${BEST_OF}"
 echo "  Aug enabled: ${AUG_ENABLED}"
 echo "  Aug flip: ${AUG_FLIP}"
 echo "  Aug rotate deg: ${AUG_ROTATE_DEG}"
@@ -112,6 +114,9 @@ fi
 
 if [ "${STRATIFIED}" = "true" ]; then
     CMD="${CMD} --stratified"
+fi
+if [ -n "${BEST_OF}" ]; then
+    CMD="${CMD} --best-of ${BEST_OF}"
 fi
 
 if [ "${AUG_ENABLED}" = "true" ]; then

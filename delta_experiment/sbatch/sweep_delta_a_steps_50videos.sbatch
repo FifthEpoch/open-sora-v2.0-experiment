@@ -4,7 +4,7 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --time=6:00:00
-#SBATCH --mem=32G
+#SBATCH --mem=256G
 #SBATCH --gres=gpu:h200:1
 #SBATCH --output=delta_experiment/logs/deltaA_steps_%A_%a.out
 #SBATCH --error=delta_experiment/logs/deltaA_steps_%A_%a.err

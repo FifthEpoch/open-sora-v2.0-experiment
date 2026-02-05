@@ -78,6 +78,10 @@ BASELINE_DIR="${EVAL_BASELINE_DIR:-$BASELINE_DIR}"
 LORA_DIR="${EVAL_LORA_DIR:-$LORA_DIR}"
 OUTPUT_DIR="${EVAL_OUTPUT_DIR:-$OUTPUT_DIR}"
 MAX_VIDEOS="${EVAL_MAX_VIDEOS:-}"
+EVAL_FRAME_COUNT="${EVAL_FRAME_COUNT:-}"
+EVAL_FRAME_STRIDE="${EVAL_FRAME_STRIDE:-1}"
+EVAL_INCLUDE_CONTEXT="${EVAL_INCLUDE_CONTEXT:-false}"
+EVAL_BEST_OF="${EVAL_BEST_OF:-1}"
 
 echo ""
 echo "Configuration:"
@@ -87,6 +91,10 @@ echo "  Baseline directory: ${BASELINE_DIR}"
 echo "  LoRA directory: ${LORA_DIR}"
 echo "  Output directory: ${OUTPUT_DIR}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
+echo "  Eval frame count: ${EVAL_FRAME_COUNT:-all}"
+echo "  Eval frame stride: ${EVAL_FRAME_STRIDE}"
+echo "  Include context: ${EVAL_INCLUDE_CONTEXT}"
+echo "  Best-of: ${EVAL_BEST_OF}"
 echo ""
 
 # ==============================================================================
@@ -111,6 +119,18 @@ fi
 
 if [ -n "${MAX_VIDEOS}" ]; then
     CMD="${CMD} --max-videos ${MAX_VIDEOS}"
+fi
+if [ -n "${EVAL_FRAME_COUNT}" ]; then
+    CMD="${CMD} --eval-frame-count ${EVAL_FRAME_COUNT}"
+fi
+if [ -n "${EVAL_FRAME_STRIDE}" ]; then
+    CMD="${CMD} --eval-frame-stride ${EVAL_FRAME_STRIDE}"
+fi
+if [ "${EVAL_INCLUDE_CONTEXT}" = "true" ]; then
+    CMD="${CMD} --include-context"
+fi
+if [ -n "${EVAL_BEST_OF}" ]; then
+    CMD="${CMD} --best-of ${EVAL_BEST_OF}"
 fi
 
 echo "Running: ${CMD}"

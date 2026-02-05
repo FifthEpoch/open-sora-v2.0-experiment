@@ -99,6 +99,51 @@ def match_video_shapes(pred: np.ndarray, gt: np.ndarray) -> tuple:
     return pred, gt
 
 
+def slice_eval_frames(
+    video: np.ndarray,
+    cond_frames: int,
+    include_context: bool,
+    eval_frame_count: int | None,
+    eval_frame_stride: int,
+) -> np.ndarray:
+    """Slice video to evaluation window with optional stride."""
+    if include_context:
+        sliced = video
+    else:
+        sliced = video[cond_frames:, :, :, :]
+    if eval_frame_stride > 1:
+        sliced = sliced[::eval_frame_stride]
+    if eval_frame_count is not None:
+        sliced = sliced[:eval_frame_count]
+    return sliced
+
+
+def collect_sample_paths(item: dict, best_of: int) -> list[str]:
+    """Collect candidate sample paths for best-of evaluation."""
+    paths: list[str] = []
+    if not item:
+        return paths
+    if "output_paths" in item and isinstance(item["output_paths"], list):
+        paths.extend([p for p in item["output_paths"] if isinstance(p, str)])
+    if "output_path" in item and isinstance(item["output_path"], str):
+        paths.append(item["output_path"])
+    # Look for numbered sample variants if requested
+    if best_of > 1 and paths:
+        base_path = Path(paths[0])
+        for idx in range(best_of):
+            candidate = base_path.with_name(f"{base_path.stem}_sample{idx}.mp4")
+            if candidate.exists():
+                paths.append(str(candidate))
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for p in paths:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    return deduped[: max(1, best_of)]
+
+
 def compute_psnr(pred: np.ndarray, gt: np.ndarray) -> float:
     """Compute PSNR between two videos."""
     mse = np.mean((pred.astype(float) - gt.astype(float)) ** 2)
@@ -231,6 +276,10 @@ def run_evaluation(args):
     
     # Evaluation params
     cond_frames = 33  # v2v_head uses 33 conditioning frames
+    eval_frame_count = args.eval_frame_count
+    eval_frame_stride = max(1, args.eval_frame_stride)
+    include_context = bool(args.include_context)
+    best_of = max(1, args.best_of)
     
     for item in tqdm(video_list, desc="Evaluating"):
         video_name = item["video_name"]
@@ -254,41 +303,105 @@ def run_evaluation(args):
                 baseline_item = next((r for r in baseline_results 
                                       if r.get("video_name") == video_name and r.get("success")), None)
                 if baseline_item:
-                    baseline_path = baseline_item["output_path"]
-                    if os.path.exists(baseline_path):
+                    sample_paths = collect_sample_paths(baseline_item, best_of)
+                    if len(sample_paths) == 1 and best_of > 1:
+                        print(f"Warning: baseline best-of requested but only one sample for {video_name}")
+                    best_psnr = None
+                    best_ssim = None
+                    best_lpips = None
+                    best_temporal = None
+                    for baseline_path in sample_paths:
+                        if not os.path.exists(baseline_path):
+                            continue
                         baseline_video = load_video(baseline_path)
-                        # Compare generation portion (skip conditioning frames in output)
-                        baseline_gen = baseline_video[cond_frames:, :, :, :]
-                        
+                        baseline_clip = slice_eval_frames(
+                            baseline_video,
+                            cond_frames=cond_frames,
+                            include_context=include_context,
+                            eval_frame_count=eval_frame_count,
+                            eval_frame_stride=eval_frame_stride,
+                        )
+                        gt_clip = slice_eval_frames(
+                            gt_video,
+                            cond_frames=cond_frames,
+                            include_context=include_context,
+                            eval_frame_count=eval_frame_count,
+                            eval_frame_stride=eval_frame_stride,
+                        )
+
                         # Match shapes (resize baseline to GT resolution for fair comparison)
-                        baseline_gen, gt_for_baseline = match_video_shapes(baseline_gen, gt_gen_frames)
-                        
-                        metrics["baseline_psnr"] = compute_psnr(baseline_gen, gt_for_baseline)
-                        metrics["baseline_ssim"] = compute_ssim(baseline_gen, gt_for_baseline)
-                        if lpips_model:
-                            metrics["baseline_lpips"] = compute_lpips(baseline_gen, gt_for_baseline, lpips_model)
-                        metrics["baseline_temporal"] = compute_temporal_consistency(baseline_gen)
+                        baseline_clip, gt_for_baseline = match_video_shapes(baseline_clip, gt_clip)
+
+                        psnr = compute_psnr(baseline_clip, gt_for_baseline)
+                        ssim = compute_ssim(baseline_clip, gt_for_baseline)
+                        lpips = compute_lpips(baseline_clip, gt_for_baseline, lpips_model) if lpips_model else None
+                        temporal = compute_temporal_consistency(baseline_clip)
+
+                        best_psnr = psnr if best_psnr is None else max(best_psnr, psnr)
+                        best_ssim = ssim if best_ssim is None else max(best_ssim, ssim)
+                        if lpips is not None:
+                            best_lpips = lpips if best_lpips is None else min(best_lpips, lpips)
+                        best_temporal = temporal if best_temporal is None else max(best_temporal, temporal)
+
+                    if best_psnr is not None:
+                        metrics["baseline_psnr"] = best_psnr
+                        metrics["baseline_ssim"] = best_ssim
+                        if best_lpips is not None:
+                            metrics["baseline_lpips"] = best_lpips
+                        metrics["baseline_temporal"] = best_temporal
             
             # Evaluate LoRA
             if lora_results:
                 lora_item = next((r for r in lora_results 
                                   if r.get("video_name") == video_name and r.get("success")), None)
                 if lora_item:
-                    lora_path = lora_item["output_path"]
-                    if os.path.exists(lora_path):
+                    sample_paths = collect_sample_paths(lora_item, best_of)
+                    if len(sample_paths) == 1 and best_of > 1:
+                        print(f"Warning: lora best-of requested but only one sample for {video_name}")
+                    best_psnr = None
+                    best_ssim = None
+                    best_lpips = None
+                    best_temporal = None
+                    for lora_path in sample_paths:
+                        if not os.path.exists(lora_path):
+                            continue
                         lora_video = load_video(lora_path)
-                        # Compare generation portion
-                        lora_gen = lora_video[cond_frames:, :, :, :]
-                        
+                        lora_clip = slice_eval_frames(
+                            lora_video,
+                            cond_frames=cond_frames,
+                            include_context=include_context,
+                            eval_frame_count=eval_frame_count,
+                            eval_frame_stride=eval_frame_stride,
+                        )
+                        gt_clip = slice_eval_frames(
+                            gt_video,
+                            cond_frames=cond_frames,
+                            include_context=include_context,
+                            eval_frame_count=eval_frame_count,
+                            eval_frame_stride=eval_frame_stride,
+                        )
+
                         # Match shapes (resize lora to GT resolution for fair comparison)
-                        lora_gen, gt_for_lora = match_video_shapes(lora_gen, gt_gen_frames)
-                        
-                        metrics["lora_psnr"] = compute_psnr(lora_gen, gt_for_lora)
-                        metrics["lora_ssim"] = compute_ssim(lora_gen, gt_for_lora)
-                        if lpips_model:
-                            metrics["lora_lpips"] = compute_lpips(lora_gen, gt_for_lora, lpips_model)
-                        metrics["lora_temporal"] = compute_temporal_consistency(lora_gen)
-                        
+                        lora_clip, gt_for_lora = match_video_shapes(lora_clip, gt_clip)
+
+                        psnr = compute_psnr(lora_clip, gt_for_lora)
+                        ssim = compute_ssim(lora_clip, gt_for_lora)
+                        lpips = compute_lpips(lora_clip, gt_for_lora, lpips_model) if lpips_model else None
+                        temporal = compute_temporal_consistency(lora_clip)
+
+                        best_psnr = psnr if best_psnr is None else max(best_psnr, psnr)
+                        best_ssim = ssim if best_ssim is None else max(best_ssim, ssim)
+                        if lpips is not None:
+                            best_lpips = lpips if best_lpips is None else min(best_lpips, lpips)
+                        best_temporal = temporal if best_temporal is None else max(best_temporal, temporal)
+
+                    if best_psnr is not None:
+                        metrics["lora_psnr"] = best_psnr
+                        metrics["lora_ssim"] = best_ssim
+                        if best_lpips is not None:
+                            metrics["lora_lpips"] = best_lpips
+                        metrics["lora_temporal"] = best_temporal
+
                         # Add training info
                         metrics["train_time"] = lora_item.get("train_time")
                         metrics["final_loss"] = lora_item.get("final_loss")
@@ -374,6 +487,14 @@ def main():
                         help="Output directory for evaluation results")
     parser.add_argument("--max-videos", type=int, default=None,
                         help="Maximum number of videos to evaluate")
+    parser.add_argument("--eval-frame-count", type=int, default=None,
+                        help="Number of frames to evaluate after slicing/stride")
+    parser.add_argument("--eval-frame-stride", type=int, default=1,
+                        help="Stride when sampling frames for evaluation")
+    parser.add_argument("--include-context", action="store_true",
+                        help="Include conditioning frames in evaluation clip")
+    parser.add_argument("--best-of", type=int, default=1,
+                        help="Best-of-N sampling for metrics when multiple samples exist")
     
     args = parser.parse_args()
     

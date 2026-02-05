@@ -227,6 +227,51 @@ def load_video_for_training(
     return latents, pixel_frames
 
 
+def load_video_for_eval(
+    video_path: str,
+    num_frames: int,
+    target_height: int | None = None,
+    target_width: int | None = None,
+) -> torch.Tensor:
+    """
+    Load a video and return pixel frames for evaluation (CPU tensor).
+    """
+    import av
+    import cv2
+
+    container = av.open(video_path)
+    frames = []
+
+    for frame in container.decode(video=0):
+        img = frame.to_ndarray(format="rgb24")
+        if target_height is not None and target_width is not None:
+            img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
+        frames.append(img)
+        if len(frames) >= num_frames:
+            break
+
+    container.close()
+
+    if len(frames) < num_frames:
+        while len(frames) < num_frames:
+            frames.append(frames[-1])
+
+    frames = np.stack(frames[:num_frames], axis=0)
+    frames = torch.from_numpy(frames).permute(3, 0, 1, 2).float() / 255.0
+    pixel_frames = frames * 2 - 1
+    return pixel_frames.unsqueeze(0)
+
+
+def compute_psnr_tensor(pred: torch.Tensor, gt: torch.Tensor) -> float:
+    """Compute PSNR between two tensors in [-1, 1] range."""
+    pred_u8 = ((pred + 1) / 2).clamp(0, 1) * 255.0
+    gt_u8 = ((gt + 1) / 2).clamp(0, 1) * 255.0
+    mse = torch.mean((pred_u8 - gt_u8) ** 2)
+    if mse.item() == 0:
+        return float("inf")
+    return float(20 * torch.log10(torch.tensor(255.0)) - 10 * torch.log10(mse))
+
+
 def make_img_ids_from_time_ids(
     time_ids: torch.Tensor,
     h_patches: int,
