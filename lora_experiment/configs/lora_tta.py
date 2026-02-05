@@ -13,10 +13,10 @@ dtype = "bf16"
 # ============================================================
 # Data Settings
 # ============================================================
-# Conditioning frames: first 33 frames (9 latent frames after VAE encoding)
-# Total frames needed: 65 (33 conditioning + 32 to generate)
-conditioning_frames = 33
-total_frames = 65
+# Conditioning frames: first 2 frames
+# Total frames needed: 16 (2 conditioning + 14 to generate)
+conditioning_frames = 2
+total_frames = 16
 fps = 24
 resolution = "256px"  # or "768px"
 aspect_ratio = "16:9"
@@ -71,8 +71,8 @@ training = dict(
 # Inference Settings
 # ============================================================
 inference = dict(
-    cond_type="v2v_head",    # Use first 33 frames as conditioning
-    num_frames=65,           # Total output frames
+    cond_type="v2v_head",    # Use first 2 frames as conditioning
+    num_frames=16,           # Total output frames
     num_steps=25,            # Diffusion steps
     guidance=7.5,            # Text guidance scale
     guidance_img=3.0,        # Image guidance scale

@@ -226,7 +226,17 @@ def main() -> None:
     parser.add_argument("--groups-single", type=int, default=4)
     parser.add_argument("--aug-enabled", action="store_true")
     parser.add_argument("--aug-flip", action="store_true")
-    parser.add_argument("--aug-rotate-deg", type=float, default=0.0)
+    parser.add_argument("--aug-rotate-deg", type=float, default=10.0)
+    parser.add_argument("--aug-rotate-random-min", type=float, default=5.0)
+    parser.add_argument("--aug-rotate-random-max", type=float, default=15.0)
+    parser.add_argument("--aug-rotate-random-count", type=int, default=2)
+    parser.add_argument("--aug-rotate-random-step", type=float, default=1.0)
+    parser.add_argument(
+        "--no-aug-rotate-zoom",
+        action="store_false",
+        dest="aug_rotate_zoom",
+    )
+    parser.set_defaults(aug_rotate_zoom=True)
     parser.add_argument("--aug-speed-factors", type=str, default="")
 
     parser.add_argument("--inference-steps", type=int, default=25)
@@ -252,7 +262,7 @@ def main() -> None:
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=65,
+        num_frames=16,
         num_steps=args.inference_steps,
         shift=True,
         temporal_reduction=4,
@@ -302,7 +312,7 @@ def main() -> None:
 
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
-                    video_path, model_ae, 33, device, dtype,
+                    video_path, model_ae, 2, device, dtype,
                     target_height=192, target_width=336
                 )
 
@@ -321,6 +331,11 @@ def main() -> None:
                     model_ae=model_ae,
                     enable_flip=args.aug_flip,
                     rotate_deg=args.aug_rotate_deg,
+                    rotate_random_min=args.aug_rotate_random_min,
+                    rotate_random_max=args.aug_rotate_random_max,
+                    rotate_random_count=args.aug_rotate_random_count,
+                    rotate_random_step=args.aug_rotate_random_step,
+                    rotate_zoom=args.aug_rotate_zoom,
                     speed_factors=speed_factors,
                 )
 
@@ -386,9 +401,16 @@ def main() -> None:
                 # Stitch original conditioning frames back into the output
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
                 output = output.clone()
-                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
 
-                save_video(output, str(output_path), fps=24, target_height=192, target_width=336)
+                save_video(
+                    output,
+                    str(output_path),
+                    fps=24,
+                    target_height=192,
+                    target_width=336,
+                    context_frames=2,
+                )
 
             total_s = now_s() - total_start
             results.append(

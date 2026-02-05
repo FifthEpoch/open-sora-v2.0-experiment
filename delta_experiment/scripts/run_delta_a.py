@@ -35,6 +35,8 @@ from delta_experiment.scripts.common import (
     load_video_for_training,
     load_video_for_eval,
     compute_psnr_tensor,
+    upsert_result,
+    build_metrics_summary,
     build_augmented_latent_variants,
     make_img_ids_from_time_ids,
 )
@@ -209,7 +211,17 @@ def main():
                         help="Generate N samples and keep best by PSNR (uses GT frames)")
     parser.add_argument("--aug-enabled", action="store_true")
     parser.add_argument("--aug-flip", action="store_true")
-    parser.add_argument("--aug-rotate-deg", type=float, default=0.0)
+    parser.add_argument("--aug-rotate-deg", type=float, default=10.0)
+    parser.add_argument("--aug-rotate-random-min", type=float, default=5.0)
+    parser.add_argument("--aug-rotate-random-max", type=float, default=15.0)
+    parser.add_argument("--aug-rotate-random-count", type=int, default=2)
+    parser.add_argument("--aug-rotate-random-step", type=float, default=1.0)
+    parser.add_argument(
+        "--no-aug-rotate-zoom",
+        action="store_false",
+        dest="aug_rotate_zoom",
+    )
+    parser.set_defaults(aug_rotate_zoom=True)
     parser.add_argument("--aug-speed-factors", type=str, default="")
 
     parser.add_argument("--inference-steps", type=int, default=25)
@@ -250,7 +262,7 @@ def main():
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=65,
+        num_frames=16,
         num_steps=args.inference_steps,
         shift=True,
         temporal_reduction=4,
@@ -289,14 +301,14 @@ def main():
 
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
-                    video_path, model_ae, 33, device, dtype,
+                    video_path, model_ae, 2, device, dtype,
                     target_height=192, target_width=336
                 )
             gt_frames = None
             if args.best_of > 1:
                 gt_frames = load_video_for_eval(
                     video_path,
-                    num_frames=65,
+                    num_frames=16,
                     target_height=192,
                     target_width=336,
                 )
@@ -316,6 +328,11 @@ def main():
                     model_ae=model_ae,
                     enable_flip=args.aug_flip,
                     rotate_deg=args.aug_rotate_deg,
+                    rotate_random_min=args.aug_rotate_random_min,
+                    rotate_random_max=args.aug_rotate_random_max,
+                    rotate_random_count=args.aug_rotate_random_count,
+                    rotate_random_step=args.aug_rotate_random_step,
+                    rotate_zoom=args.aug_rotate_zoom,
                     speed_factors=speed_factors,
                 )
 
@@ -357,10 +374,10 @@ def main():
                         )
                     stitched = resize_pixel_frames_to_output(pixel_frames, output)
                     output = output.clone()
-                    output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                    output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
                     if gt_frames is not None:
-                        pred_gen = output[:, :, 33:, :, :].detach().cpu()
-                        gt_gen = gt_frames[:, :, 33:, :, :]
+                        pred_gen = output[:, :, 2:, :, :].detach().cpu()
+                        gt_gen = gt_frames[:, :, 2:, :, :]
                         psnr = compute_psnr_tensor(pred_gen, gt_gen)
                         if best_psnr is None or psnr > best_psnr:
                             best_psnr = psnr
@@ -378,11 +395,18 @@ def main():
             with pt.phase("save_video"):
                 if best_output is None:
                     raise RuntimeError("No output generated during best-of sampling.")
-                save_video(best_output, str(output_path), fps=24, target_height=192, target_width=336)
+                save_video(
+                    best_output,
+                    str(output_path),
+                    fps=24,
+                    target_height=192,
+                    target_width=336,
+                    context_frames=2,
+                )
 
             total_s = now_s() - total_start
 
-            results.append({
+            upsert_result(results, {
                 "idx": idx,
                 "video_name": video_name,
                 "input_path": video_path,
@@ -417,7 +441,7 @@ def main():
             del latents, txt_embed, vec_embed, losses, delta, best_output
 
         except Exception as e:
-            results.append({
+            upsert_result(results, {
                 "idx": idx,
                 "video_name": video_name,
                 "input_path": video_path,
@@ -435,21 +459,36 @@ def main():
                 ).to_dict()
             )
 
+        write_json(out_dir / "results.json", results)
+        write_timing_files(out_dir, timing_records)
+        write_json(
+            out_dir / "metrics_summary.json",
+            {
+                **build_metrics_summary(results, len(df), method="delta_a_global_vec"),
+                "delta_steps": args.delta_steps,
+                "delta_lr": args.delta_lr,
+                "total_train_time": total_train,
+                "total_gen_time": total_gen,
+                "best_of": args.best_of,
+            },
+        )
+
         gc.collect()
         torch.cuda.empty_cache()
 
     write_json(out_dir / "results.json", results)
     write_timing_files(out_dir, timing_records)
-    write_json(out_dir / "metrics_summary.json", {
-        "method": "delta_a_global_vec",
-        "num_videos": len(df),
-        "successful": sum(1 for r in results if r.get("success")),
-        "failed": sum(1 for r in results if not r.get("success")),
-        "delta_steps": args.delta_steps,
-        "delta_lr": args.delta_lr,
-        "total_train_time": total_train,
-        "total_gen_time": total_gen,
-    })
+    write_json(
+        out_dir / "metrics_summary.json",
+        {
+            **build_metrics_summary(results, len(df), method="delta_a_global_vec"),
+            "delta_steps": args.delta_steps,
+            "delta_lr": args.delta_lr,
+            "total_train_time": total_train,
+            "total_gen_time": total_gen,
+            "best_of": args.best_of,
+        },
+    )
 
 
 if __name__ == "__main__":

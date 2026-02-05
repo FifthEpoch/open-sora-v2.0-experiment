@@ -142,6 +142,8 @@ def save_video(
     fps: int = 24,
     target_height: int | None = None,
     target_width: int | None = None,
+    context_frames: int | None = None,
+    border_thickness: int = 3,
 ):
     """Save video tensor to file with optional upscaling and higher encode quality."""
     import imageio
@@ -170,6 +172,17 @@ def save_video(
             resized_frames.append(resized)
         video = resized_frames
     
+    if context_frames and context_frames > 0:
+        for i in range(min(context_frames, len(video))):
+            frame = video[i]
+            cv2.rectangle(
+                frame,
+                (0, 0),
+                (frame.shape[1] - 1, frame.shape[0] - 1),
+                color=(255, 0, 255),
+                thickness=border_thickness,
+            )
+
     # Save with higher quality / bitrate to reduce blockiness
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     imageio.mimwrite(
@@ -282,6 +295,92 @@ def compute_psnr_tensor(pred: torch.Tensor, gt: torch.Tensor) -> float:
     if mse.item() == 0:
         return float("inf")
     return float(20 * torch.log10(torch.tensor(255.0)) - 10 * torch.log10(mse))
+
+
+def upsert_result(results: list[dict], new_result: dict) -> None:
+    key = new_result.get("video_name")
+    if key is None:
+        results.append(new_result)
+        return
+
+    for idx, existing in enumerate(results):
+        if existing.get("video_name") != key:
+            continue
+
+        # If we already have a successful record and new is failure, keep success.
+        if existing.get("success", False) and not new_result.get("success", False):
+            return
+
+        # If upgrading from failure to success, replace.
+        if not existing.get("success", False) and new_result.get("success", False):
+            results[idx] = new_result
+            return
+
+        # Average timing on repeated success.
+        if existing.get("success", False) and new_result.get("success", False):
+            attempts = int(existing.get("attempts", 1))
+
+            def avg_field(name: str) -> None:
+                if name in new_result and new_result[name] is not None:
+                    prev = existing.get(name)
+                    if prev is None:
+                        existing[name] = new_result[name]
+                    else:
+                        existing[name] = (prev * attempts + new_result[name]) / (attempts + 1)
+
+            for field in ("train_time", "gen_time", "total_time"):
+                avg_field(field)
+
+            # Track best PSNR and corresponding sample index.
+            if new_result.get("best_psnr") is not None:
+                prev_best = existing.get("best_psnr")
+                if prev_best is None or new_result["best_psnr"] > prev_best:
+                    existing["best_psnr"] = new_result["best_psnr"]
+                    existing["best_sample_idx"] = new_result.get("best_sample_idx")
+
+            existing["attempts"] = attempts + 1
+            existing["output_path"] = new_result.get("output_path", existing.get("output_path"))
+            existing["final_loss"] = new_result.get("final_loss", existing.get("final_loss"))
+            existing["avg_loss"] = new_result.get("avg_loss", existing.get("avg_loss"))
+            return
+
+        results[idx] = new_result
+        return
+
+    results.append(new_result)
+
+
+def build_metrics_summary(results: list[dict], df_len: int) -> dict:
+    successful = [r for r in results if r.get("success", False)]
+    if not successful:
+        return {
+            "num_videos": df_len,
+            "successful": 0,
+            "failed": df_len,
+        }
+
+    avg_train_time = sum(r["train_time"] for r in successful if r.get("train_time") is not None) / len(successful)
+    avg_gen_time = sum(r["gen_time"] for r in successful if r.get("gen_time") is not None) / len(successful)
+    avg_total_time = sum(r["total_time"] for r in successful if r.get("total_time") is not None) / len(successful)
+    avg_final_loss = sum(r["final_loss"] for r in successful if r.get("final_loss") is not None) / len(successful)
+    total_train_time = sum(r["train_time"] for r in successful if r.get("train_time") is not None)
+    total_gen_time = sum(r["gen_time"] for r in successful if r.get("gen_time") is not None)
+
+    return {
+        "num_videos": df_len,
+        "successful": len(successful),
+        "failed": df_len - len(successful),
+        "lora_rank": results[0].get("lora_rank") if results else None,
+        "lora_alpha": results[0].get("lora_alpha") if results else None,
+        "learning_rate": results[0].get("learning_rate") if results else None,
+        "num_steps": results[0].get("num_steps") if results else None,
+        "avg_train_time": avg_train_time,
+        "avg_gen_time": avg_gen_time,
+        "avg_total_time": avg_total_time,
+        "avg_final_loss": avg_final_loss,
+        "total_train_time": total_train_time,
+        "total_gen_time": total_gen_time,
+    }
 
 
 def finetune_lora_on_conditioning(
@@ -533,8 +632,8 @@ def run_tta_experiment(args):
         },
         "training": train_config,
         "inference": {
-            "num_frames": 65,
-            "conditioning_frames": 33,
+            "num_frames": 16,
+            "conditioning_frames": 2,
             "num_steps": args.inference_steps,
             "guidance": args.guidance,
             "guidance_img": args.guidance_img,
@@ -549,6 +648,11 @@ def run_tta_experiment(args):
             "enabled": args.aug_enabled,
             "flip": args.aug_flip,
             "rotate_deg": args.aug_rotate_deg,
+            "rotate_random_min": args.aug_rotate_random_min,
+            "rotate_random_max": args.aug_rotate_random_max,
+            "rotate_random_count": args.aug_rotate_random_count,
+            "rotate_random_step": args.aug_rotate_random_step,
+            "rotate_zoom": args.aug_rotate_zoom,
             "speed_factors": parse_speed_factors(args.aug_speed_factors),
         },
     }
@@ -601,7 +705,7 @@ def run_tta_experiment(args):
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=65,
+        num_frames=16,
         num_steps=args.inference_steps,
         shift=True,
         temporal_reduction=4,
@@ -639,14 +743,14 @@ def run_tta_experiment(args):
             # Load and encode conditioning frames
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
-                    video_path, model_ae, 33, device, dtype,
+                    video_path, model_ae, 2, device, dtype,
                     target_height=192, target_width=336
                 )
             gt_frames = None
             if args.best_of > 1:
                 gt_frames = load_video_for_eval(
                     video_path,
-                    num_frames=65,
+                    num_frames=16,
                     target_height=192,
                     target_width=336,
                 )
@@ -671,6 +775,11 @@ def run_tta_experiment(args):
                     model_ae=model_ae,
                     enable_flip=args.aug_flip,
                     rotate_deg=args.aug_rotate_deg,
+                    rotate_random_min=args.aug_rotate_random_min,
+                    rotate_random_max=args.aug_rotate_random_max,
+                    rotate_random_count=args.aug_rotate_random_count,
+                    rotate_random_step=args.aug_rotate_random_step,
+                    rotate_zoom=args.aug_rotate_zoom,
                     speed_factors=speed_factors,
                 )
             
@@ -708,10 +817,10 @@ def run_tta_experiment(args):
                         )
                     stitched = resize_pixel_frames_to_output(pixel_frames, output)
                     output = output.clone()
-                    output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                    output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
                     if gt_frames is not None:
-                        pred_gen = output[:, :, 33:, :, :].detach().cpu()
-                        gt_gen = gt_frames[:, :, 33:, :, :]
+                        pred_gen = output[:, :, 2:, :, :].detach().cpu()
+                        gt_gen = gt_frames[:, :, 2:, :, :]
                         psnr = compute_psnr_tensor(pred_gen, gt_gen)
                         if best_psnr is None or psnr > best_psnr:
                             best_psnr = psnr
@@ -735,6 +844,7 @@ def run_tta_experiment(args):
                     fps=24,
                     target_height=192,
                     target_width=336,
+                    context_frames=2,
                 )
             
             # Optionally save LoRA weights
@@ -761,7 +871,7 @@ def run_tta_experiment(args):
                 "best_psnr": best_psnr,
                 "success": True,
             }
-            results.append(result)
+            upsert_result(results, result)
             timing_records.append(
                 TimingRecord(
                     idx=idx,
@@ -786,7 +896,7 @@ def run_tta_experiment(args):
             import traceback
             print(f"\nError processing {video_name}: {e}")
             traceback.print_exc()
-            results.append({
+            upsert_result(results, {
                 "idx": idx,
                 "video_name": video_name,
                 "input_path": video_path,
@@ -805,14 +915,21 @@ def run_tta_experiment(args):
             )
             fail_count += 1
         
-        # Save checkpoint every 10 videos
-        if (idx + 1) % 10 == 0:
-            checkpoint = {
-                "next_idx": idx + 1,
-                "results": results,
-            }
-            with open(checkpoint_path, "w") as f:
-                json.dump(checkpoint, f, indent=2)
+        # Save progress every video (prevents losing data on walltime kill)
+        checkpoint = {
+            "next_idx": idx + 1,
+            "results": results,
+        }
+        with open(checkpoint_path, "w") as f:
+            json.dump(checkpoint, f, indent=2)
+
+        with open(output_dir / "results.json", "w") as f:
+            json.dump(results, f, indent=2)
+
+        write_timing_files(output_dir, timing_records)
+
+        with open(output_dir / "metrics_summary.json", "w") as f:
+            json.dump(build_metrics_summary(results, len(df)), f, indent=2)
         
         # Aggressive memory cleanup after each video
         gc.collect()
@@ -902,8 +1019,23 @@ def main():
                         help="Enable data augmentation during TTA")
     parser.add_argument("--aug-flip", action="store_true",
                         help="Enable horizontal flip augmentation")
-    parser.add_argument("--aug-rotate-deg", type=float, default=0.0,
+    parser.add_argument("--aug-rotate-deg", type=float, default=10.0,
                         help="Max rotation degrees (applies ±deg)")
+    parser.add_argument("--aug-rotate-random-min", type=float, default=5.0,
+                        help="Random rotation min degrees (inclusive)")
+    parser.add_argument("--aug-rotate-random-max", type=float, default=15.0,
+                        help="Random rotation max degrees (inclusive)")
+    parser.add_argument("--aug-rotate-random-count", type=int, default=2,
+                        help="Number of random rotations to add")
+    parser.add_argument("--aug-rotate-random-step", type=float, default=1.0,
+                        help="Discrete step size for random rotations")
+    parser.add_argument(
+        "--no-aug-rotate-zoom",
+        action="store_false",
+        dest="aug_rotate_zoom",
+        help="Disable zoom when rotating (may introduce black borders)",
+    )
+    parser.set_defaults(aug_rotate_zoom=True)
     parser.add_argument("--aug-speed-factors", type=str, default="",
                         help="Comma-separated speed factors (e.g., 0.5,2.0)")
     

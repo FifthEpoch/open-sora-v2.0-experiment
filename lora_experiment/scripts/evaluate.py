@@ -275,7 +275,7 @@ def run_evaluation(args):
     print(f"\nEvaluating {len(video_list)} videos...")
     
     # Evaluation params
-    cond_frames = 33  # v2v_head uses 33 conditioning frames
+    cond_frames = 2  # v2v_head default for current experiments
     eval_frame_count = args.eval_frame_count
     eval_frame_stride = max(1, args.eval_frame_stride)
     include_context = bool(args.include_context)

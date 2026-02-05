@@ -135,6 +135,8 @@ def save_video(
     fps: int = 24,
     target_height: int | None = None,
     target_width: int | None = None,
+    context_frames: int | None = None,
+    border_thickness: int = 3,
 ):
     """
     Save video tensor to mp4 using higher quality settings to avoid blockiness.
@@ -160,6 +162,17 @@ def save_video(
             resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
             resized_frames.append(resized)
         video = resized_frames
+
+    if context_frames and context_frames > 0:
+        for i in range(min(context_frames, len(video))):
+            frame = video[i]
+            cv2.rectangle(
+                frame,
+                (0, 0),
+                (frame.shape[1] - 1, frame.shape[0] - 1),
+                color=(255, 0, 255),
+                thickness=border_thickness,
+            )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     imageio.mimwrite(
@@ -235,7 +248,7 @@ def run_baseline_generation(args):
     config = {
         "type": "baseline",
         "num_frames": 65,
-        "conditioning_frames": 33,
+        "conditioning_frames": 2,
         "num_steps": args.num_steps,
         "guidance": args.guidance,
         "guidance_img": args.guidance_img,
@@ -277,7 +290,7 @@ def run_baseline_generation(args):
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=65,
+        num_frames=16,
         num_steps=args.num_steps,
         shift=True,
         temporal_reduction=4,
@@ -313,7 +326,7 @@ def run_baseline_generation(args):
             
             # Load conditioning frames for stitching later
             pixel_frames = load_video_for_conditioning(
-                video_path, num_frames=33, target_height=192, target_width=336,
+                video_path, num_frames=2, target_height=192, target_width=336,
                 device=device, dtype=dtype
             )
 
@@ -338,7 +351,7 @@ def run_baseline_generation(args):
                 # Stitch original conditioning frames back into the output
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
                 output = output.clone()
-                output[:, :, :33, :, :] = stitched.to(output.device, output.dtype)
+                output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(
                     output,
@@ -346,6 +359,7 @@ def run_baseline_generation(args):
                     fps=24,
                     target_height=192,
                     target_width=336,
+                    context_frames=2,
                 )
 
             total_s = now_s() - total_start
