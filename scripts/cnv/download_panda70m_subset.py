@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-duration", type=int, default=4)
     parser.add_argument("--max-duration", type=int, default=60)
     parser.add_argument("--min-bytes", type=int, default=1_000_000)
+    parser.add_argument("--min-frames", type=int, default=26)
     parser.add_argument("--resize-height", type=int, default=None)
     parser.add_argument("--resize-width", type=int, default=None)
     return parser.parse_args()
@@ -101,6 +102,56 @@ def _validate_video(path: Path) -> bool:
         str(path),
     ]
     return subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def _count_frames(path: Path) -> int | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return None
+    # Try to read nb_frames directly.
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=nb_frames",
+        "-of",
+        "default=nw=1:nk=1",
+        str(path),
+    ]
+    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    if result.returncode == 0:
+        value = result.stdout.strip()
+        if value.isdigit():
+            return int(value)
+    # Fallback: estimate using duration * fps.
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=r_frame_rate:format=duration",
+        "-of",
+        "default=nw=1:nk=1",
+        str(path),
+    ]
+    result = subprocess.run(cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    if result.returncode != 0:
+        return None
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+    try:
+        fps_num, fps_den = lines[0].split("/")
+        fps = float(fps_num) / float(fps_den)
+        duration = float(lines[1])
+        return int(round(fps * duration))
+    except Exception:
+        return None
 
 
 def _resize_video(path: Path, height: int, width: int) -> bool:
@@ -222,6 +273,13 @@ def main() -> None:
         if not ok:
             failures += 1
             continue
+        if args.min_frames:
+            frame_count = _count_frames(video_path)
+            if frame_count is None or frame_count < args.min_frames:
+                failures += 1
+                if video_path.exists():
+                    video_path.unlink()
+                continue
         if args.resize_height is not None and args.resize_width is not None:
             resized = _resize_video(video_path, args.resize_height, args.resize_width)
             if not resized:

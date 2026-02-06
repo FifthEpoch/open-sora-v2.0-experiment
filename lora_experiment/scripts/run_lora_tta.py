@@ -246,6 +246,8 @@ def load_video_for_training(
     
     container.close()
     
+    if len(frames) == 0:
+        raise ValueError(f"No frames available from {video_path} (start_idx={start_idx})")
     if len(frames) < num_frames:
         while len(frames) < num_frames:
             frames.append(frames[-1])
@@ -289,6 +291,8 @@ def load_video_for_eval(
             break
     container.close()
 
+    if len(frames) == 0:
+        return None
     if len(frames) < num_frames:
         while len(frames) < num_frames:
             frames.append(frames[-1])
@@ -794,6 +798,11 @@ def run_tta_experiment(args):
                     target_height=192,
                     target_width=336,
                 )
+                if gt_frames is None:
+                    raise ValueError(
+                        f"Insufficient GT frames for {video_name}: "
+                        f"need start={args.gt_start}, len={args.gt_frames}"
+                    )
             
             # Encode text
             with pt.phase("embed_text"):

@@ -269,6 +269,13 @@ def load_video_for_eval(
 
     container.close()
 
+    if len(frames) == 0:
+        raise ValueError(f"No frames available from {video_path} (start_idx={start_idx})")
+    if len(frames) < num_frames:
+        while len(frames) < num_frames:
+            frames.append(frames[-1])
+    if len(frames) == 0:
+        return None
     if len(frames) < num_frames:
         while len(frames) < num_frames:
             frames.append(frames[-1])

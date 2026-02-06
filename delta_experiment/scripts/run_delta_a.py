@@ -336,6 +336,11 @@ def main():
                     target_height=192,
                     target_width=336,
                 )
+                if gt_frames is None:
+                    raise ValueError(
+                        f"Insufficient GT frames for {video_name}: "
+                        f"need start={args.gt_start}, len={args.gt_frames}"
+                    )
 
             with pt.phase("embed_text"):
                 with torch.no_grad():
