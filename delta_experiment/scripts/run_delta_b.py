@@ -388,7 +388,7 @@ def main():
                         with torch.inference_mode():
                             output = api_fn(
                                 sampling_option,
-                                cond_type="v2v_head",
+                                cond_type="i2v_head2",
                                 text=[caption],
                                 ref=[video_path],
                                 seed=args.seed + idx * 1000 + sample_idx,

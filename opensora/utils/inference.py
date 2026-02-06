@@ -254,6 +254,12 @@ def collect_references_batch(
             r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
             r_x = r_x.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x)
+        elif cond_type == "i2v_head2":  # take the first 2 frames from first ref_path
+            r = read_from_path(ref_path[0], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r = r[:, :2]
+            r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
+            r_x = r_x.squeeze(0)  # size [C, T, H, W]
+            ref.append(r_x)
         elif cond_type == "i2v_tail":  # take the last frame from last ref_path
             r = read_from_path(ref_path[-1], image_size, transform_name="resize_crop")  # size [C, T, H, W]
             r = r[:, -1:]
@@ -318,6 +324,9 @@ def prepare_inference_condition(
             if mask_cond == "i2v_head":  # equivalent to masking the first timestep
                 masks[i, :, 0, :, :] = 1
                 masked_z[i, :, 0, :, :] = ref[0][:, 0, :, :]
+            elif mask_cond == "i2v_head2":  # mask the first two timesteps
+                masks[i, :, :2, :, :] = 1
+                masked_z[i, :, :2, :, :] = ref[0][:, :2, :, :]
             elif mask_cond == "i2v_tail":  # mask the last timestep
                 masks[i, :, -1, :, :] = 1
                 masked_z[i, :, -1, :, :] = ref[-1][:, -1, :, :]
