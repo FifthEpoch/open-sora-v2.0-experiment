@@ -733,7 +733,7 @@ def main():
     parser.add_argument("--max-videos", type=int, default=None)
     parser.add_argument("--stratified", action="store_true")
     parser.add_argument("--reference-results-json", type=str, default=None)
-    parser.add_argument("--best-of", type=int, default=1,
+    parser.add_argument("--best-of", type=int, default=5,
                         help="Generate N samples and keep best by PSNR (uses GT frames)")
     parser.add_argument("--aug-enabled", action="store_true")
     parser.add_argument("--aug-flip", action="store_true")

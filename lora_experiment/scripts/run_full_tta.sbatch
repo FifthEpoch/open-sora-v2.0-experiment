@@ -61,7 +61,7 @@ GUIDANCE_IMG="${GUIDANCE_IMG:-3.0}"
 MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
-BEST_OF="${BEST_OF:-1}"
+BEST_OF="${BEST_OF:-5}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"

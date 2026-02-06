@@ -93,7 +93,7 @@ STRATIFIED="${STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
 RESTART="${LORA_RESTART:-true}"  # Default to restart (fresh start)
-BEST_OF="${BEST_OF:-1}"
+BEST_OF="${BEST_OF:-5}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"

@@ -1060,7 +1060,7 @@ def main():
                         help="Restart from beginning (ignore checkpoint)")
     parser.add_argument("--save-lora-weights", action="store_true",
                         help="Save LoRA weights for each video")
-    parser.add_argument("--best-of", type=int, default=1,
+    parser.add_argument("--best-of", type=int, default=5,
                         help="Generate N samples and keep best by PSNR (uses GT frames)")
     parser.add_argument(
         "--reference-results-json",

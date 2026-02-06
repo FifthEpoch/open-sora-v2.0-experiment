@@ -53,7 +53,7 @@ WARMUP_STEPS="${WARMUP_STEPS:-3}"
 MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
-BEST_OF="${BEST_OF:-1}"
+BEST_OF="${BEST_OF:-5}"
 
 CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_c.py \
   --data-dir ${DATA_DIR} \
