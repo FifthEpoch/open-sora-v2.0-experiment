@@ -63,6 +63,14 @@ def parse_speed_factors(raw: str) -> list[float]:
     return [float(p) for p in parts if p]
 
 
+def cond_type_for_frames(cond_frames: int) -> str:
+    if cond_frames <= 1:
+        return "i2v_head"
+    if cond_frames == 2:
+        return "i2v_head2"
+    return "i2v_headk"
+
+
 def optimize_delta_groups(
     model,
     delta_double_groups: torch.nn.ParameterList,
@@ -229,6 +237,12 @@ def main():
         dest="aug_rotate_zoom",
     )
     parser.set_defaults(aug_rotate_zoom=True)
+    parser.add_argument("--tta-train-frames", type=int, default=10)
+    parser.add_argument("--tta-train-start", type=int, default=0)
+    parser.add_argument("--cond-frames", type=int, default=2)
+    parser.add_argument("--cond-start", type=int, default=8)
+    parser.add_argument("--gt-frames", type=int, default=16)
+    parser.add_argument("--gt-start", type=int, default=10)
     parser.add_argument("--aug-speed-factors", type=str, default="")
 
     parser.add_argument("--inference-steps", type=int, default=25)
@@ -263,10 +277,12 @@ def main():
         p.requires_grad = False
 
     api_fn = prepare_api(model, model_ae, model_t5, model_clip, optional_models)
+    total_frames = args.cond_frames + args.gt_frames
+    cond_type = cond_type_for_frames(args.cond_frames)
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=16,
+        num_frames=total_frames,
         num_steps=args.inference_steps,
         shift=True,
         temporal_reduction=4,
@@ -305,14 +321,22 @@ def main():
 
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
-                    video_path, model_ae, 2, device, dtype,
+                    video_path, model_ae, args.tta_train_frames, args.tta_train_start, device, dtype,
                     target_height=192, target_width=336
                 )
+            cond_frames = load_video_for_eval(
+                video_path,
+                num_frames=args.cond_frames,
+                start_idx=args.cond_start,
+                target_height=192,
+                target_width=336,
+            )
             gt_frames = None
             if args.best_of > 1:
                 gt_frames = load_video_for_eval(
                     video_path,
-                    num_frames=16,
+                    num_frames=args.gt_frames,
+                    start_idx=args.gt_start,
                     target_height=192,
                     target_width=336,
                 )
@@ -388,18 +412,18 @@ def main():
                         with torch.inference_mode():
                             output = api_fn(
                                 sampling_option,
-                                cond_type="i2v_head2",
+                                cond_type=cond_type,
                                 text=[caption],
-                                ref=[video_path],
+                                ref=[f"{video_path}::start={args.cond_start}::len={args.cond_frames}"],
                                 seed=args.seed + idx * 1000 + sample_idx,
                                 channel=cfg.model.get("in_channels", 64),
                             )
-                        stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                        stitched = resize_pixel_frames_to_output(cond_frames, output)
                         output = output.clone()
                         output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
                         if gt_frames is not None:
-                            pred_gen = output[:, :, 2:, :, :].detach().cpu()
-                            gt_gen = gt_frames[:, :, 2:, :, :]
+                            pred_gen = output[:, :, args.cond_frames:, :, :].detach().cpu()
+                            gt_gen = gt_frames[:, :, :pred_gen.shape[2], :, :]
                             psnr = compute_psnr_tensor(pred_gen, gt_gen)
                             if best_psnr is None or psnr > best_psnr:
                                 best_psnr = psnr
@@ -425,7 +449,7 @@ def main():
                     fps=24,
                     target_height=192,
                     target_width=336,
-                    context_frames=2,
+                    context_frames=args.cond_frames,
                 )
 
             total_s = now_s() - total_start

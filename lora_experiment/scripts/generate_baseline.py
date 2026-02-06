@@ -97,6 +97,7 @@ def load_video_for_conditioning(
     num_frames: int = 33,
     target_height: int | None = None,
     target_width: int | None = None,
+    start_idx: int = 0,
     device: torch.device = "cpu",
     dtype: torch.dtype = torch.float32,
 ) -> torch.Tensor:
@@ -111,7 +112,8 @@ def load_video_for_conditioning(
         img = frame.to_ndarray(format='rgb24')
         if target_height is not None and target_width is not None:
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-        frames.append(img)
+        if len(frames) >= start_idx:
+            frames.append(img)
         if len(frames) >= num_frames:
             break
     
@@ -195,6 +197,14 @@ def resize_pixel_frames_to_output(pixel_frames: torch.Tensor, output: torch.Tens
     frames = F.interpolate(frames, size=(target_h, target_w), mode="bilinear", align_corners=False)
     frames = frames.reshape(b, t, c, target_h, target_w).permute(0, 2, 1, 3, 4)
     return frames
+
+
+def cond_type_for_frames(cond_frames: int) -> str:
+    if cond_frames <= 1:
+        return "i2v_head"
+    if cond_frames == 2:
+        return "i2v_head2"
+    return "i2v_headk"
 
 
 def run_baseline_generation(args):
@@ -287,10 +297,12 @@ def run_baseline_generation(args):
     api_fn = prepare_api(model, model_ae, model_t5, model_clip, optional_models)
     
     # Sampling options
+    total_frames = args.cond_frames + args.gt_frames
+    cond_type = cond_type_for_frames(args.cond_frames)
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=16,
+        num_frames=total_frames,
         num_steps=args.num_steps,
         shift=True,
         temporal_reduction=4,
@@ -326,8 +338,8 @@ def run_baseline_generation(args):
             
             # Load conditioning frames for stitching later
             pixel_frames = load_video_for_conditioning(
-                video_path, num_frames=2, target_height=192, target_width=336,
-                device=device, dtype=dtype
+                video_path, num_frames=args.cond_frames, target_height=192, target_width=336,
+                device=device, dtype=dtype, start_idx=args.cond_start
             )
 
             # Generate using the API function
@@ -335,9 +347,9 @@ def run_baseline_generation(args):
                 with torch.inference_mode():
                     output = api_fn(
                         sampling_option,
-                    cond_type="i2v_head2",
+                        cond_type=cond_type,
                         text=[caption],
-                        ref=[video_path],
+                        ref=[f"{video_path}::start={args.cond_start}::len={args.cond_frames}"],
                         seed=args.seed + idx,
                         channel=cfg.model.get("in_channels", 64),
                     )
@@ -351,7 +363,7 @@ def run_baseline_generation(args):
                 # Stitch original conditioning frames back into the output
                 stitched = resize_pixel_frames_to_output(pixel_frames, output)
                 output = output.clone()
-                output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
+                output[:, :, :args.cond_frames, :, :] = stitched.to(output.device, output.dtype)
 
                 save_video(
                     output,
@@ -359,7 +371,7 @@ def run_baseline_generation(args):
                     fps=24,
                     target_height=192,
                     target_width=336,
-                    context_frames=2,
+                    context_frames=args.cond_frames,
                 )
 
             total_s = now_s() - total_start
@@ -409,14 +421,16 @@ def run_baseline_generation(args):
             )
             fail_count += 1
         
-        # Save checkpoint every 10 videos
-        if (idx + 1) % 10 == 0:
-            checkpoint = {
-                "next_idx": idx + 1,
-                "results": results,
-            }
-            with open(checkpoint_path, "w") as f:
-                json.dump(checkpoint, f, indent=2)
+        # Save progress after each video
+        checkpoint = {
+            "next_idx": idx + 1,
+            "results": results,
+        }
+        with open(checkpoint_path, "w") as f:
+            json.dump(checkpoint, f, indent=2)
+        with open(output_dir / "results.json", "w") as f:
+            json.dump(results, f, indent=2)
+        write_timing_files(output_dir, timing_records)
         
         # Clear GPU memory
         torch.cuda.empty_cache()
@@ -456,6 +470,16 @@ def main():
                         help="Text guidance scale")
     parser.add_argument("--guidance-img", type=float, default=3.0,
                         help="Image guidance scale")
+
+    # Protocol-B controls
+    parser.add_argument("--cond-frames", type=int, default=2,
+                        help="Number of conditioning frames for inference")
+    parser.add_argument("--cond-start", type=int, default=8,
+                        help="Start index for inference conditioning frames")
+    parser.add_argument("--gt-frames", type=int, default=16,
+                        help="Number of GT frames for evaluation")
+    parser.add_argument("--gt-start", type=int, default=10,
+                        help="Start index for GT evaluation frames")
     
     # Other arguments
     parser.add_argument("--dtype", type=str, default="bf16",

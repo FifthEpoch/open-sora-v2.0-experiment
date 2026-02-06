@@ -54,6 +54,12 @@ MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
 BEST_OF="${BEST_OF:-5}"
+TTA_TRAIN_FRAMES="${TTA_TRAIN_FRAMES:-10}"
+TTA_TRAIN_START="${TTA_TRAIN_START:-0}"
+COND_FRAMES="${COND_FRAMES:-2}"
+COND_START="${COND_START:-8}"
+GT_FRAMES="${GT_FRAMES:-16}"
+GT_START="${GT_START:-10}"
 
 CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_c.py \
   --data-dir ${DATA_DIR} \
@@ -63,7 +69,13 @@ CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_c.py \
   --delta-lr ${DELTA_LR} \
   --warmup-steps ${WARMUP_STEPS} \
   --max-videos ${MAX_VIDEOS} \
-  --seed ${SEED}"
+  --seed ${SEED} \
+  --tta-train-frames ${TTA_TRAIN_FRAMES} \
+  --tta-train-start ${TTA_TRAIN_START} \
+  --cond-frames ${COND_FRAMES} \
+  --cond-start ${COND_START} \
+  --gt-frames ${GT_FRAMES} \
+  --gt-start ${GT_START}"
 
 if [ "${STRATIFIED}" = "true" ]; then
   CMD="${CMD} --stratified"

@@ -57,6 +57,12 @@ MAX_VIDEOS="${MAX_VIDEOS:-100}"
 STRATIFIED="${STRATIFIED:-true}"
 SEED="${SEED:-42}"
 BEST_OF="${BEST_OF:-5}"
+TTA_TRAIN_FRAMES="${TTA_TRAIN_FRAMES:-10}"
+TTA_TRAIN_START="${TTA_TRAIN_START:-0}"
+COND_FRAMES="${COND_FRAMES:-2}"
+COND_START="${COND_START:-8}"
+GT_FRAMES="${GT_FRAMES:-16}"
+GT_START="${GT_START:-10}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"
@@ -74,7 +80,13 @@ CMD="python ${PROJECT_ROOT}/delta_experiment/scripts/run_delta_b.py \
   --groups-double ${GROUPS_DOUBLE} \
   --groups-single ${GROUPS_SINGLE} \
   --max-videos ${MAX_VIDEOS} \
-  --seed ${SEED}"
+  --seed ${SEED} \
+  --tta-train-frames ${TTA_TRAIN_FRAMES} \
+  --tta-train-start ${TTA_TRAIN_START} \
+  --cond-frames ${COND_FRAMES} \
+  --cond-start ${COND_START} \
+  --gt-frames ${GT_FRAMES} \
+  --gt-start ${GT_START}"
 
 if [ "${STRATIFIED}" = "true" ]; then
   CMD="${CMD} --stratified"

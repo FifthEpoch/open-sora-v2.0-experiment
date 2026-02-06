@@ -105,12 +105,13 @@ def slice_eval_frames(
     include_context: bool,
     eval_frame_count: int | None,
     eval_frame_stride: int,
+    gt_start: int = 0,
 ) -> np.ndarray:
     """Slice video to evaluation window with optional stride."""
     if include_context:
         sliced = video
     else:
-        sliced = video[cond_frames:, :, :, :]
+        sliced = video[gt_start:, :, :, :]
     if eval_frame_stride > 1:
         sliced = sliced[::eval_frame_stride]
     if eval_frame_count is not None:
@@ -275,7 +276,9 @@ def run_evaluation(args):
     print(f"\nEvaluating {len(video_list)} videos...")
     
     # Evaluation params
-    cond_frames = 2  # v2v_head default for current experiments
+    cond_frames = 2  # current experiments use 2 conditioning frames
+    gt_start = args.gt_start
+    gt_length = args.gt_frames
     eval_frame_count = args.eval_frame_count
     eval_frame_stride = max(1, args.eval_frame_stride)
     include_context = bool(args.include_context)
@@ -296,7 +299,7 @@ def run_evaluation(args):
         try:
             # Load ground truth (generation frames: 34-65, i.e., indices 33-64)
             gt_video = load_video(gt_path)
-            gt_gen_frames = gt_video[cond_frames:, :, :, :]  # Generation portion
+            gt_gen_frames = gt_video[gt_start:gt_start + gt_length, :, :, :]
             
             # Evaluate baseline
             if baseline_results:
@@ -320,6 +323,7 @@ def run_evaluation(args):
                             include_context=include_context,
                             eval_frame_count=eval_frame_count,
                             eval_frame_stride=eval_frame_stride,
+                            gt_start=cond_frames,
                         )
                         gt_clip = slice_eval_frames(
                             gt_video,
@@ -327,6 +331,7 @@ def run_evaluation(args):
                             include_context=include_context,
                             eval_frame_count=eval_frame_count,
                             eval_frame_stride=eval_frame_stride,
+                            gt_start=gt_start,
                         )
 
                         # Match shapes (resize baseline to GT resolution for fair comparison)
@@ -372,6 +377,7 @@ def run_evaluation(args):
                             include_context=include_context,
                             eval_frame_count=eval_frame_count,
                             eval_frame_stride=eval_frame_stride,
+                            gt_start=cond_frames,
                         )
                         gt_clip = slice_eval_frames(
                             gt_video,
@@ -379,6 +385,7 @@ def run_evaluation(args):
                             include_context=include_context,
                             eval_frame_count=eval_frame_count,
                             eval_frame_stride=eval_frame_stride,
+                            gt_start=gt_start,
                         )
 
                         # Match shapes (resize lora to GT resolution for fair comparison)
@@ -495,6 +502,10 @@ def main():
                         help="Include conditioning frames in evaluation clip")
     parser.add_argument("--best-of", type=int, default=1,
                         help="Best-of-N sampling for metrics when multiple samples exist")
+    parser.add_argument("--gt-start", type=int, default=10,
+                        help="Start index for GT evaluation frames")
+    parser.add_argument("--gt-frames", type=int, default=16,
+                        help="Number of GT frames for evaluation")
     
     args = parser.parse_args()
     

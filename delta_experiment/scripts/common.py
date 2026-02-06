@@ -198,6 +198,7 @@ def load_video_for_training(
     video_path: str,
     model_ae,
     num_frames: int,
+    start_idx: int,
     device: torch.device,
     dtype: torch.dtype,
     target_height: int | None = None,
@@ -216,7 +217,8 @@ def load_video_for_training(
         img = frame.to_ndarray(format="rgb24")
         if target_height is not None and target_width is not None:
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-        frames.append(img)
+        if len(frames) >= start_idx:
+            frames.append(img)
         if len(frames) >= num_frames:
             break
     container.close()
@@ -243,6 +245,7 @@ def load_video_for_training(
 def load_video_for_eval(
     video_path: str,
     num_frames: int,
+    start_idx: int = 0,
     target_height: int | None = None,
     target_width: int | None = None,
 ) -> torch.Tensor:
@@ -259,7 +262,8 @@ def load_video_for_eval(
         img = frame.to_ndarray(format="rgb24")
         if target_height is not None and target_width is not None:
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-        frames.append(img)
+        if len(frames) >= start_idx:
+            frames.append(img)
         if len(frames) >= num_frames:
             break
 
@@ -277,6 +281,10 @@ def load_video_for_eval(
 
 def compute_psnr_tensor(pred: torch.Tensor, gt: torch.Tensor) -> float:
     """Compute PSNR between two tensors in [-1, 1] range."""
+    if pred.shape != gt.shape:
+        t = min(pred.shape[2], gt.shape[2])
+        pred = pred[:, :, :t, :, :]
+        gt = gt[:, :, :t, :, :]
     pred_u8 = ((pred + 1) / 2).clamp(0, 1) * 255.0
     gt_u8 = ((gt + 1) / 2).clamp(0, 1) * 255.0
     mse = torch.mean((pred_u8 - gt_u8) ** 2)

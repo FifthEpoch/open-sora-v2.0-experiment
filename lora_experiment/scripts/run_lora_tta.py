@@ -125,6 +125,14 @@ def parse_speed_factors(raw: str) -> list[float]:
     return [float(p) for p in parts if p]
 
 
+def cond_type_for_frames(cond_frames: int) -> str:
+    if cond_frames <= 1:
+        return "i2v_head"
+    if cond_frames == 2:
+        return "i2v_head2"
+    return "i2v_headk"
+
+
 def resize_pixel_frames_to_output(pixel_frames: torch.Tensor, output: torch.Tensor) -> torch.Tensor:
     if pixel_frames.shape[-2:] == output.shape[-2:]:
         return pixel_frames
@@ -200,6 +208,7 @@ def load_video_for_training(
     video_path: str,
     model_ae,
     num_frames: int,
+    start_idx: int,
     device: torch.device,
     dtype: torch.dtype,
     target_height: int | None = None,
@@ -230,7 +239,8 @@ def load_video_for_training(
         img = frame.to_ndarray(format='rgb24')
         if target_height is not None and target_width is not None:
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-        frames.append(img)
+        if len(frames) >= start_idx:
+            frames.append(img)
         if len(frames) >= num_frames:
             break
     
@@ -259,6 +269,7 @@ def load_video_for_training(
 def load_video_for_eval(
     video_path: str,
     num_frames: int,
+    start_idx: int = 0,
     target_height: int | None = None,
     target_width: int | None = None,
 ) -> torch.Tensor:
@@ -272,7 +283,8 @@ def load_video_for_eval(
         img = frame.to_ndarray(format="rgb24")
         if target_height is not None and target_width is not None:
             img = cv2.resize(img, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
-        frames.append(img)
+        if len(frames) >= start_idx:
+            frames.append(img)
         if len(frames) >= num_frames:
             break
     container.close()
@@ -289,6 +301,11 @@ def load_video_for_eval(
 
 def compute_psnr_tensor(pred: torch.Tensor, gt: torch.Tensor) -> float:
     """Compute PSNR between two tensors in [-1, 1] range."""
+    if pred.shape != gt.shape:
+        # Align temporal length if generation produces fewer frames.
+        t = min(pred.shape[2], gt.shape[2])
+        pred = pred[:, :, :t, :, :]
+        gt = gt[:, :, :t, :, :]
     pred_u8 = ((pred + 1) / 2).clamp(0, 1) * 255.0
     gt_u8 = ((gt + 1) / 2).clamp(0, 1) * 255.0
     mse = torch.mean((pred_u8 - gt_u8) ** 2)
@@ -623,6 +640,7 @@ def run_tta_experiment(args):
     }
     
     # Save experiment config
+    total_frames = args.cond_frames + args.gt_frames
     exp_config = {
         "type": "lora_tta",
         "lora": {
@@ -632,13 +650,21 @@ def run_tta_experiment(args):
         },
         "training": train_config,
         "inference": {
-            "num_frames": 16,
-            "conditioning_frames": 2,
+            "num_frames": total_frames,
+            "conditioning_frames": args.cond_frames,
             "num_steps": args.inference_steps,
             "guidance": args.guidance,
             "guidance_img": args.guidance_img,
         },
         "best_of": args.best_of,
+        "protocol": {
+            "tta_train_frames": args.tta_train_frames,
+            "tta_train_start": args.tta_train_start,
+            "cond_frames": args.cond_frames,
+            "cond_start": args.cond_start,
+            "gt_frames": args.gt_frames,
+            "gt_start": args.gt_start,
+        },
         "seed": args.seed,
         "max_videos": args.max_videos,
         "stratified": args.stratified,
@@ -702,10 +728,11 @@ def run_tta_experiment(args):
     api_fn = prepare_api(model, model_ae, model_t5, model_clip, optional_models)
     
     # Sampling options for generation
+    cond_type = cond_type_for_frames(args.cond_frames)
     sampling_option = SamplingOption(
         resolution="256px",
         aspect_ratio="16:9",
-        num_frames=16,
+        num_frames=total_frames,
         num_steps=args.inference_steps,
         shift=True,
         temporal_reduction=4,
@@ -743,14 +770,27 @@ def run_tta_experiment(args):
             # Load and encode conditioning frames
             with pt.phase("encode_video"):
                 latents, pixel_frames = load_video_for_training(
-                    video_path, model_ae, 2, device, dtype,
+                    video_path,
+                    model_ae,
+                    args.tta_train_frames,
+                    args.tta_train_start,
+                    device,
+                    dtype,
                     target_height=192, target_width=336
                 )
+            cond_frames = load_video_for_eval(
+                video_path,
+                num_frames=args.cond_frames,
+                start_idx=args.cond_start,
+                target_height=192,
+                target_width=336,
+            )
             gt_frames = None
             if args.best_of > 1:
                 gt_frames = load_video_for_eval(
                     video_path,
-                    num_frames=16,
+                    num_frames=args.gt_frames,
+                    start_idx=args.gt_start,
                     target_height=192,
                     target_width=336,
                 )
@@ -809,18 +849,18 @@ def run_tta_experiment(args):
                     with torch.inference_mode():
                         output = api_fn(
                             sampling_option,
-                        cond_type="i2v_head2",
+                        cond_type=cond_type,
                             text=[caption],
-                            ref=[video_path],
+                        ref=[f"{video_path}::start={args.cond_start}::len={args.cond_frames}"],
                             seed=args.seed + idx * 1000 + sample_idx,
                             channel=cfg.model.get("in_channels", 64),
                         )
-                    stitched = resize_pixel_frames_to_output(pixel_frames, output)
+                    stitched = resize_pixel_frames_to_output(cond_frames, output)
                     output = output.clone()
                     output[:, :, :2, :, :] = stitched.to(output.device, output.dtype)
                     if gt_frames is not None:
-                        pred_gen = output[:, :, 2:, :, :].detach().cpu()
-                        gt_gen = gt_frames[:, :, 2:, :, :]
+                        pred_gen = output[:, :, args.cond_frames:, :, :].detach().cpu()
+                        gt_gen = gt_frames[:, :, :pred_gen.shape[2], :, :]
                         psnr = compute_psnr_tensor(pred_gen, gt_gen)
                         if best_psnr is None or psnr > best_psnr:
                             best_psnr = psnr
@@ -1046,6 +1086,20 @@ def main():
                         help="Text guidance scale")
     parser.add_argument("--guidance-img", type=float, default=3.0,
                         help="Image guidance scale")
+
+    # Protocol-B controls
+    parser.add_argument("--tta-train-frames", type=int, default=10,
+                        help="Number of frames available for TTA training")
+    parser.add_argument("--tta-train-start", type=int, default=0,
+                        help="Start index for TTA training frames")
+    parser.add_argument("--cond-frames", type=int, default=2,
+                        help="Number of conditioning frames for inference")
+    parser.add_argument("--cond-start", type=int, default=8,
+                        help="Start index for inference conditioning frames")
+    parser.add_argument("--gt-frames", type=int, default=16,
+                        help="Number of GT frames for evaluation")
+    parser.add_argument("--gt-start", type=int, default=10,
+                        help="Start index for GT evaluation frames")
     
     # Other arguments
     parser.add_argument("--dtype", type=str, default="bf16",

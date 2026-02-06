@@ -94,6 +94,12 @@ SEED="${SEED:-42}"
 SAVE_LORA_WEIGHTS="${SAVE_LORA_WEIGHTS:-false}"
 RESTART="${LORA_RESTART:-true}"  # Default to restart (fresh start)
 BEST_OF="${BEST_OF:-5}"
+TTA_TRAIN_FRAMES="${TTA_TRAIN_FRAMES:-10}"
+TTA_TRAIN_START="${TTA_TRAIN_START:-0}"
+COND_FRAMES="${COND_FRAMES:-2}"
+COND_START="${COND_START:-8}"
+GT_FRAMES="${GT_FRAMES:-16}"
+GT_START="${GT_START:-10}"
 
 # Augmentation parameters (TTA only)
 AUG_ENABLED="${AUG_ENABLED:-false}"
@@ -126,6 +132,12 @@ echo "  Restart (fresh start): ${RESTART}"
 echo "  Seed: ${SEED}"
 echo "  Save LoRA weights: ${SAVE_LORA_WEIGHTS}"
 echo "  Best-of: ${BEST_OF}"
+echo "  TTA train frames: ${TTA_TRAIN_FRAMES}"
+echo "  TTA train start: ${TTA_TRAIN_START}"
+echo "  Cond frames: ${COND_FRAMES}"
+echo "  Cond start: ${COND_START}"
+echo "  GT frames: ${GT_FRAMES}"
+echo "  GT start: ${GT_START}"
 echo "  Aug enabled: ${AUG_ENABLED}"
 echo "  Aug flip: ${AUG_FLIP}"
 echo "  Aug rotate deg: ${AUG_ROTATE_DEG}"
@@ -147,7 +159,13 @@ CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/run_lora_tta.py \
     --inference-steps ${INFERENCE_STEPS} \
     --guidance ${GUIDANCE} \
     --guidance-img ${GUIDANCE_IMG} \
-    --seed ${SEED}"
+    --seed ${SEED} \
+    --tta-train-frames ${TTA_TRAIN_FRAMES} \
+    --tta-train-start ${TTA_TRAIN_START} \
+    --cond-frames ${COND_FRAMES} \
+    --cond-start ${COND_START} \
+    --gt-frames ${GT_FRAMES} \
+    --gt-start ${GT_START}"
 
 if [ "${TARGET_MLP}" = "true" ]; then
     CMD="${CMD} --target-mlp"

@@ -83,6 +83,10 @@ GUIDANCE_IMG="${BASELINE_GUIDANCE_IMG:-3.0}"
 MAX_VIDEOS="${BASELINE_MAX_VIDEOS:-100}"  # Default to 100 videos for TTA experiments
 STRATIFIED="${BASELINE_STRATIFIED:-true}"  # Use stratified sampling across classes
 SEED="${BASELINE_SEED:-42}"
+COND_FRAMES="${BASELINE_COND_FRAMES:-2}"
+COND_START="${BASELINE_COND_START:-8}"
+GT_FRAMES="${BASELINE_GT_FRAMES:-16}"
+GT_START="${BASELINE_GT_START:-10}"
 
 echo ""
 echo "Configuration:"
@@ -95,6 +99,10 @@ echo "  Image guidance: ${GUIDANCE_IMG}"
 echo "  Max videos: ${MAX_VIDEOS:-all}"
 echo "  Stratified sampling: ${STRATIFIED}"
 echo "  Seed: ${SEED}"
+echo "  Cond frames: ${COND_FRAMES}"
+echo "  Cond start: ${COND_START}"
+echo "  GT frames: ${GT_FRAMES}"
+echo "  GT start: ${GT_START}"
 echo ""
 
 # ==============================================================================
@@ -107,7 +115,11 @@ CMD="python ${PROJECT_ROOT}/lora_experiment/scripts/generate_baseline.py \
     --num-steps ${NUM_STEPS} \
     --guidance ${GUIDANCE} \
     --guidance-img ${GUIDANCE_IMG} \
-    --seed ${SEED}"
+    --seed ${SEED} \
+    --cond-frames ${COND_FRAMES} \
+    --cond-start ${COND_START} \
+    --gt-frames ${GT_FRAMES} \
+    --gt-start ${GT_START}"
 
 if [ -n "${MAX_VIDEOS}" ]; then
     CMD="${CMD} --max-videos ${MAX_VIDEOS}"

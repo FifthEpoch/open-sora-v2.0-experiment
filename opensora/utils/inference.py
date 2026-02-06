@@ -230,8 +230,35 @@ def collect_references_batch(
         ref_path = reference_path.split(";")
         ref = []
 
+        def _parse_ref_spec(raw: str) -> tuple[str, int | None, int | None]:
+            if "::" not in raw:
+                return raw, None, None
+            parts = raw.split("::")
+            base = parts[0]
+            start = None
+            length = None
+            for part in parts[1:]:
+                if "=" not in part:
+                    continue
+                key, val = part.split("=", 1)
+                if key == "start":
+                    start = int(val)
+                elif key in ("len", "length"):
+                    length = int(val)
+            return base, start, length
+
+        def _read_ref_slice(raw: str) -> torch.Tensor:
+            base, start, length = _parse_ref_spec(raw)
+            r = read_from_path(base, image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            if start is None and length is None:
+                return r
+            s = start or 0
+            if length is None:
+                return r[:, s:]
+            return r[:, s : s + length]
+
         if "v2v" in cond_type:
-            r = read_from_path(ref_path[0], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r = _read_ref_slice(ref_path[0])  # size [C, T, H, W]
             actual_t = r.size(1)
             target_t = (
                 64 if (actual_t >= 64 and "easy" in cond_type) else 32
@@ -249,32 +276,37 @@ def collect_references_batch(
             r_x = r_x.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x)
         elif cond_type == "i2v_head":  # take the 1st frame from first ref_path
-            r = read_from_path(ref_path[0], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r = _read_ref_slice(ref_path[0])  # size [C, T, H, W]
             r = r[:, :1]
             r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
             r_x = r_x.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x)
         elif cond_type == "i2v_head2":  # take the first 2 frames from first ref_path
-            r = read_from_path(ref_path[0], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r = _read_ref_slice(ref_path[0])  # size [C, T, H, W]
             r = r[:, :2]
             r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
             r_x = r_x.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x)
+        elif cond_type == "i2v_headk":  # take the provided slice length from ref
+            r = _read_ref_slice(ref_path[0])  # size [C, T, H, W]
+            r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
+            r_x = r_x.squeeze(0)  # size [C, T, H, W]
+            ref.append(r_x)
         elif cond_type == "i2v_tail":  # take the last frame from last ref_path
-            r = read_from_path(ref_path[-1], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r = _read_ref_slice(ref_path[-1])  # size [C, T, H, W]
             r = r[:, -1:]
             r_x = model_ae.encode(r.unsqueeze(0).to(device, dtype))
             r_x = r_x.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x)
         elif cond_type == "i2v_loop":
             # first frame
-            r_head = read_from_path(ref_path[0], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r_head = _read_ref_slice(ref_path[0])  # size [C, T, H, W]
             r_head = r_head[:, :1]
             r_x_head = model_ae.encode(r_head.unsqueeze(0).to(device, dtype))
             r_x_head = r_x_head.squeeze(0)  # size [C, T, H, W]
             ref.append(r_x_head)
             # last frame
-            r_tail = read_from_path(ref_path[-1], image_size, transform_name="resize_crop")  # size [C, T, H, W]
+            r_tail = _read_ref_slice(ref_path[-1])  # size [C, T, H, W]
             r_tail = r_tail[:, -1:]
             r_x_tail = model_ae.encode(r_tail.unsqueeze(0).to(device, dtype))
             r_x_tail = r_x_tail.squeeze(0)  # size [C, T, H, W]
@@ -327,6 +359,10 @@ def prepare_inference_condition(
             elif mask_cond == "i2v_head2":  # mask the first two timesteps
                 masks[i, :, :2, :, :] = 1
                 masked_z[i, :, :2, :, :] = ref[0][:, :2, :, :]
+            elif mask_cond == "i2v_headk":  # mask first k timesteps from ref length
+                k = min(ref[0].shape[1], T)
+                masks[i, :, :k, :, :] = 1
+                masked_z[i, :, :k, :, :] = ref[0][:, :k, :, :]
             elif mask_cond == "i2v_tail":  # mask the last timestep
                 masks[i, :, -1, :, :] = 1
                 masked_z[i, :, -1, :, :] = ref[-1][:, -1, :, :]
